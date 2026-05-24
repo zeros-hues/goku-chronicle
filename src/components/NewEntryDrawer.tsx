@@ -275,32 +275,52 @@ export default function EntryDrawer({ entry, onClose, onSave }: EntryDrawerProps
           )}
 
           {/* Meeting fields */}
-          {type === 'meeting' && (
-            <div className="form-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-              <div>
-                <label className="field-label">Duration</label>
-                <div className={'hours-input' + (parseFloat(meetingDuration) > 0 ? ' has-value' : '')}>
-                  <input
-                    type="number" min="0" max="8" step="0.5"
-                    value={meetingDuration} placeholder="0"
-                    onChange={e => setMeetingDuration(e.target.value)}
-                  />
-                  <span className="u">h</span>
+          {type === 'meeting' && (() => {
+            const dur = parseFloat(meetingDuration) || 0;
+            const ppl = parseInt(meetingPeople) || 0;
+            const total = dur > 0 && ppl > 0 ? dur * ppl : null;
+            const totalDisplay = total !== null
+              ? `${total % 1 === 0 ? total : total.toFixed(2).replace(/\.?0+$/, '')}h`
+              : '—';
+            return (
+              <div className="form-row">
+                <div className="meeting-total">
+                  <span>Total</span>
+                  <span className={total !== null ? 'v' : 'v empty'}>{totalDisplay}</span>
+                </div>
+                <div style={{ marginBottom: 18 }}>
+                  <label className="field-label">Number of people</label>
+                  <div className="picker-row">
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
+                      <button key={n} type="button"
+                        className={'picker-btn' + (ppl === n ? ' selected' : '')}
+                        onClick={() => setMeetingPeople(String(n))}
+                      >{n}</button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="field-label">Duration</label>
+                  <div className="picker-row">
+                    {([
+                      { label: '0.25h', value: 0.25 },
+                      { label: '0.5h',  value: 0.5  },
+                      { label: '0.75h', value: 0.75 },
+                      { label: '1h',    value: 1    },
+                      { label: '1.5h',  value: 1.5  },
+                      { label: '2h',    value: 2    },
+                      { label: '3h',    value: 3    },
+                    ] as { label: string; value: number }[]).map(({ label, value }) => (
+                      <button key={value} type="button"
+                        className={'picker-btn' + (dur === value ? ' selected' : '')}
+                        onClick={() => setMeetingDuration(String(value))}
+                      >{label}</button>
+                    ))}
+                  </div>
                 </div>
               </div>
-              <div>
-                <label className="field-label">Attendees</label>
-                <div className={'hours-input' + (parseInt(meetingPeople) > 0 ? ' has-value' : '')}>
-                  <input
-                    type="number" min="1" max="30"
-                    value={meetingPeople} placeholder="0"
-                    onChange={e => setMeetingPeople(e.target.value)}
-                  />
-                  <span className="u">ppl</span>
-                </div>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
         </div>
 

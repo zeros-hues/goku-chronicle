@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { CLIENTS, MEMBERS } from '@/lib/data';
-import type { View, Client, Member } from '@/lib/data';
+import type { View, Client, Member, BillingType } from '@/lib/data';
 import { IconPlus, IconEdit, IconCheck, IconX } from './Icons';
 
 type Section = Extract<View, 'clients' | 'team' | 'account'>;
@@ -13,37 +13,61 @@ const NAV: { id: Section; label: string }[] = [
   { id: 'account', label: 'Account'            },
 ];
 
+const BILLING_LABELS: Record<BillingType, string> = {
+  retainer: 'Retainer',
+  out:      'Out of retainer',
+  internal: 'Internal',
+};
+
 /* ── Clients & Projects ───────────────────────────────────── */
 function ClientsSection({ showToast }: { showToast: (t: string) => void }) {
-  const [clients, setClients]     = useState<Client[]>(CLIENTS);
-  const [editingProj, setEditing] = useState<string | null>(null);
-  const [projName, setProjName]   = useState('');
+  const [clients, setClients]         = useState<Client[]>(CLIENTS);
+  const [editingProj, setEditing]     = useState<string | null>(null);
+  const [projName, setProjName]       = useState('');
+  const [editBilling, setEditBilling] = useState<BillingType>('retainer');
   const [addingToClient, setAddingTo] = useState<string | null>(null);
   const [newProjName, setNewProjName] = useState('');
+  const [newProjBilling, setNewProjBilling] = useState<BillingType>('retainer');
   const [addingClient, setAddingClient] = useState(false);
   const [newClientName, setNewClientName] = useState('');
+  const [newClientRetainer, setNewClientRetainer] = useState(false);
 
   function saveProject(clientId: string, projId: string) {
     setClients(prev => prev.map(c =>
       c.id !== clientId ? c : {
         ...c,
-        projects: c.projects.map(p => p.id !== projId ? p : { ...p, name: projName }),
+        projects: c.projects.map(p => p.id !== projId ? p : { ...p, name: projName, billing: editBilling }),
       }
     ));
     setEditing(null);
     showToast('Project updated');
   }
 
+  function startEditing(projId: string, name: string, billing: BillingType) {
+    setEditing(projId);
+    setProjName(name);
+    setEditBilling(billing);
+  }
+
+  function startAddingProject(clientId: string) {
+    const c = clients.find(x => x.id === clientId);
+    setAddingTo(clientId);
+    setNewProjName('');
+    setNewProjBilling(c?.hasRetainership ? 'retainer' : 'internal');
+  }
+
   function addProject(clientId: string) {
     if (!newProjName.trim()) return;
+    const c = clients.find(x => x.id === clientId);
+    const billing: BillingType = c?.hasRetainership ? newProjBilling : 'internal';
     const newProj = {
       id: newProjName.toLowerCase().replace(/\s+/g, '-'),
       name: newProjName.trim(),
       color: 'var(--c-autoref)',
-      billing: 'retainer' as const,
+      billing,
     };
-    setClients(prev => prev.map(c =>
-      c.id !== clientId ? c : { ...c, projects: [...c.projects, newProj] }
+    setClients(prev => prev.map(cl =>
+      cl.id !== clientId ? cl : { ...cl, projects: [...cl.projects, newProj] }
     ));
     setAddingTo(null);
     setNewProjName('');
@@ -57,10 +81,12 @@ function ClientsSection({ showToast }: { showToast: (t: string) => void }) {
       name: newClientName.trim(),
       type: 'client',
       projects: [],
+      hasRetainership: newClientRetainer,
     };
     setClients(prev => [...prev, newClient]);
     setAddingClient(false);
     setNewClientName('');
+    setNewClientRetainer(false);
     showToast(`Client "${newClient.name}" added`);
   }
 
@@ -98,7 +124,10 @@ function ClientsSection({ showToast }: { showToast: (t: string) => void }) {
             <span className="client-name">{client.name}</span>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-fade)' }}>{client.type}</span>
-              <button className="btn btn-sm" onClick={() => { setAddingTo(client.id); setNewProjName(''); }}>
+              {client.hasRetainership && (
+                <span className="billing-badge retainer" style={{ fontSize: 9 }}>Retainership</span>
+              )}
+              <button className="btn btn-sm" onClick={() => startAddingProject(client.id)}>
                 <IconPlus size={12} /> Add project
               </button>
             </div>
@@ -125,7 +154,17 @@ function ClientsSection({ showToast }: { showToast: (t: string) => void }) {
                       style={{ padding: '4px 8px', height: 30, fontSize: 13 }}
                     />
                   </div>
-                  <span />
+                  {client.hasRetainership ? (
+                    <div className="toggle-group" style={{ padding: 2 }}>
+                      {(['retainer', 'out', 'internal'] as BillingType[]).map(b => (
+                        <button key={b} className={editBilling === b ? 'active' : ''} onClick={() => setEditBilling(b)}>
+                          {BILLING_LABELS[b]}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="billing-badge internal">Internal</span>
+                  )}
                   <div style={{ display: 'flex', gap: 4 }}>
                     <button className="btn btn-sm btn-icon" onClick={() => saveProject(client.id, proj.id)}><IconCheck size={13} /></button>
                     <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setEditing(null)}><IconX size={13} /></button>
@@ -137,9 +176,9 @@ function ClientsSection({ showToast }: { showToast: (t: string) => void }) {
                     <span style={{ width: 10, height: 10, borderRadius: '50%', background: proj.color, display: 'inline-block', flexShrink: 0 }} />
                     {proj.name}
                   </div>
-                  <span className={`billing-badge ${proj.billing}`}>{proj.billing}</span>
+                  <span className={`billing-badge ${proj.billing}`}>{BILLING_LABELS[proj.billing]}</span>
                   <button className="btn btn-ghost btn-sm btn-icon"
-                    onClick={() => { setEditing(proj.id); setProjName(proj.name); }}>
+                    onClick={() => startEditing(proj.id, proj.name, proj.billing)}>
                     <IconEdit size={13} />
                   </button>
                 </>
@@ -148,8 +187,8 @@ function ClientsSection({ showToast }: { showToast: (t: string) => void }) {
           ))}
 
           {addingToClient === client.id && (
-            <div className="proj-list-row">
-              <div className="name" style={{ gridColumn: '1 / -1' }}>
+            <div style={{ padding: '12px 18px', borderTop: '1px dashed var(--paper-rule)' }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: client.hasRetainership ? 10 : 0 }}>
                 <input
                   className="field-input"
                   value={newProjName}
@@ -162,24 +201,44 @@ function ClientsSection({ showToast }: { showToast: (t: string) => void }) {
                 <button className="btn btn-sm btn-icon" onClick={() => addProject(client.id)}><IconCheck size={13} /></button>
                 <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setAddingTo(null)}><IconX size={13} /></button>
               </div>
+              {client.hasRetainership && (
+                <div className="toggle-group" style={{ padding: 2 }}>
+                  {(['retainer', 'out', 'internal'] as BillingType[]).map(b => (
+                    <button key={b} className={newProjBilling === b ? 'active' : ''} onClick={() => setNewProjBilling(b)}>
+                      {BILLING_LABELS[b]}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
       ))}
 
       {addingClient ? (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
-          <input
-            className="field-input"
-            value={newClientName}
-            onChange={e => setNewClientName(e.target.value)}
-            placeholder="Client name"
-            autoFocus
-            onKeyDown={e => { if (e.key === 'Enter') addClient(); if (e.key === 'Escape') setAddingClient(false); }}
-            style={{ maxWidth: 280 }}
-          />
-          <button className="btn btn-sm" onClick={addClient}><IconCheck size={13} /> Add</button>
-          <button className="btn btn-ghost btn-sm" onClick={() => setAddingClient(false)}>Cancel</button>
+        <div className="proj-list-card" style={{ padding: '16px 18px', marginTop: 4 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+            <input
+              className="field-input"
+              value={newClientName}
+              onChange={e => setNewClientName(e.target.value)}
+              placeholder="Client name"
+              autoFocus
+              onKeyDown={e => { if (e.key === 'Enter') addClient(); if (e.key === 'Escape') setAddingClient(false); }}
+              style={{ maxWidth: 280 }}
+            />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+            <span className="field-label" style={{ margin: 0 }}>Has retainership?</span>
+            <div className="toggle-group" style={{ padding: 2 }}>
+              <button className={!newClientRetainer ? 'active' : ''} onClick={() => setNewClientRetainer(false)}>No</button>
+              <button className={newClientRetainer ? 'active' : ''} onClick={() => setNewClientRetainer(true)}>Yes</button>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-sm" onClick={addClient}><IconCheck size={13} /> Add client</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setAddingClient(false); setNewClientRetainer(false); }}>Cancel</button>
+          </div>
         </div>
       ) : (
         <button className="btn" style={{ marginTop: 4 }} onClick={() => setAddingClient(true)}>

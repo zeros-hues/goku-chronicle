@@ -37,13 +37,32 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
   const [range, setRange]             = useState<RangeId>('this-month');
   const [customStart, setCustomStart] = useState(() => { const d = new Date(TODAY); d.setDate(d.getDate() - 30); return fmtDate(d); });
   const [customEnd, setCustomEnd]     = useState(() => fmtDate(TODAY));
-  const [client, setClient]           = useState('all');
-  const [billing, setBilling]         = useState('all');
-  const [anon, setAnon]               = useState(false);
+  const [client, setClient]           = useState('appasamy');
+  const [billing, setBilling]         = useState('retainer');
+  const [anon, setAnon]               = useState(true);
+
+  function handleClientChange(newClient: string) {
+    setClient(newClient);
+    let newBilling: string;
+    if (newClient === 'goku') {
+      newBilling = 'internal';
+    } else if (newClient === 'appasamy') {
+      newBilling = 'retainer';
+    } else {
+      newBilling = 'all';
+    }
+    setBilling(newBilling);
+    setAnon(newClient === 'appasamy' && newBilling === 'retainer');
+  }
+
+  function handleBillingChange(newBilling: string) {
+    setBilling(newBilling);
+    setAnon(client === 'appasamy' && newBilling === 'retainer');
+  }
 
   const [rangeStart, rangeEnd] = useMemo(() => {
     const t = new Date(TODAY);
-    if (range === 'this-month') return [new Date(t.getFullYear(), t.getMonth(), 1), new Date(t.getFullYear(), t.getMonth() + 1, 0)];
+    if (range === 'this-month') return [new Date(t.getFullYear(), t.getMonth(), 1), t];
     if (range === 'last-month') return [new Date(t.getFullYear(), t.getMonth() - 1, 1), new Date(t.getFullYear(), t.getMonth(), 0)];
     if (range === 'this-year')  return [new Date(t.getFullYear(), 0, 1), new Date(t.getFullYear(), 11, 31)];
     if (range === 'custom')     return [new Date(customStart + 'T00:00:00'), new Date(customEnd + 'T00:00:00')];
@@ -62,10 +81,12 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
 
   const totalHrs = filtered.reduce((s, e) => s + entryHours(e), 0);
 
+  const isRetainerAnon = anon && billing === 'retainer';
+
   function downloadCSV() {
     const headers = ['Date', 'Day', 'Project', 'Task'];
     if (anon) {
-      headers.push('No. of resources', 'Hours');
+      headers.push('No. of resources', isRetainerAnon ? 'Working Hours' : 'Hours');
     } else {
       ACTIVE_MEMBERS.forEach(m => headers.push(m.init));
     }
@@ -82,7 +103,10 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
       ];
       if (anon) {
         if (e.type === 'meeting') {
-          row.push(e.meetingPeople ?? 0, `${e.meetingDuration}×${e.meetingPeople}`);
+          row.push(
+            e.meetingPeople ?? 0,
+            isRetainerAnon ? (e.meetingDuration ?? 0) : `${e.meetingDuration}×${e.meetingPeople}`,
+          );
         } else {
           const vals = Object.values(e.hours).filter(v => v > 0);
           row.push(vals.length, vals.join('+'));
@@ -93,6 +117,14 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
       row.push(entryHours(e));
       return row.join(',');
     });
+
+    if (isRetainerAnon) {
+      const colCount = headers.length;
+      const grandTotalRow = Array(colCount).fill('');
+      grandTotalRow[colCount - 2] = 'GRAND TOTAL';
+      grandTotalRow[colCount - 1] = totalHrs;
+      rows.push(grandTotalRow.join(','));
+    }
 
     const csv = [headers.join(','), ...rows].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -166,22 +198,29 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
           {/* Client */}
           <div className="input-block">
             <label className="field-label">Client</label>
-            <select className="field-input" value={client} onChange={e => setClient(e.target.value)}>
+            <select className="field-input" value={client} onChange={e => handleClientChange(e.target.value)}>
               <option value="all">All clients</option>
               {CLIENTS.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
 
-          {/* Billing */}
-          <div className="input-block">
-            <label className="field-label">Billing type</label>
-            <select className="field-input" value={billing} onChange={e => setBilling(e.target.value)}>
-              <option value="all">All</option>
-              <option value="retainer">Retainership</option>
-              <option value="out">Out of retainership</option>
-              <option value="internal">Internal</option>
-            </select>
-          </div>
+          {/* Billing — hidden for Goku Studio (always Internal) */}
+          {client !== 'goku' ? (
+            <div className="input-block">
+              <label className="field-label">Billing type</label>
+              <select className="field-input" value={billing} onChange={e => handleBillingChange(e.target.value)}>
+                <option value="all">All</option>
+                <option value="retainer">Retainership</option>
+                <option value="out">Out of retainership</option>
+                {client === 'all' && <option value="internal">Internal</option>}
+              </select>
+            </div>
+          ) : (
+            <div className="input-block">
+              <label className="field-label">Billing type</label>
+              <span className="billing-badge internal" style={{ display: 'inline-block', marginTop: 2 }}>Internal</span>
+            </div>
+          )}
 
           {/* Anonymous mode */}
           <div className="toggle">
@@ -259,8 +298,8 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
                     <th>Task</th>
                     {anon ? (
                       <>
-                        <th className="num" style={{ width: 80 }}>Resources</th>
-                        <th className="num" style={{ width: 80 }}>Hours</th>
+                        <th className="num" style={{ width: 90 }}>No. of Resources</th>
+                        <th className="num" style={{ width: 100 }}>{isRetainerAnon ? 'Working Hours' : 'Hours'}</th>
                       </>
                     ) : (
                       ACTIVE_MEMBERS.map(m => (
@@ -283,8 +322,8 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
                     const proj = PROJECT_BY_ID[e.projectId];
                     const d = new Date(e.date + 'T00:00:00');
                     const anonCount = e.type === 'meeting' ? (e.meetingPeople ?? 0) : Object.values(e.hours).filter(v => v > 0).length;
-                    const anonHrs = e.type === 'meeting'
-                      ? `${e.meetingDuration}×${e.meetingPeople}`
+                    const anonWorkHrs = e.type === 'meeting'
+                      ? (isRetainerAnon ? `${e.meetingDuration ?? 0}h` : `${e.meetingDuration}×${e.meetingPeople}`)
                       : Object.values(e.hours).filter(v => v > 0).join('+');
                     return (
                       <tr key={e.id} className="entry" style={{ cursor: 'default' }}>
@@ -298,7 +337,7 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
                         {anon ? (
                           <>
                             <td className="hrs"><span className="v">{anonCount}</span></td>
-                            <td className="hrs"><span className="v">{anonHrs}</span></td>
+                            <td className="hrs"><span className="v">{anonWorkHrs}</span></td>
                           </>
                         ) : (
                           ACTIVE_MEMBERS.map(m => {
@@ -320,6 +359,17 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
                       </tr>
                     );
                   })}
+                  {isRetainerAnon && filtered.length > 0 && (
+                    <tr style={{ borderTop: '2px solid var(--paper-edge)' }}>
+                      <td colSpan={4} style={{ padding: '10px', fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink)', textAlign: 'right' }}>
+                        Grand Total
+                      </td>
+                      <td className="hrs" />
+                      <td className="hrs total" style={{ fontWeight: 700, fontSize: 14 }}>
+                        <span className="v">{fmt(totalHrs)}</span><span className="u">h</span>
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             )}

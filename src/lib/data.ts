@@ -23,6 +23,7 @@ export interface Client {
   name: string;
   type: 'client' | 'internal';
   projects: Project[];
+  hasRetainership?: boolean;
 }
 
 export interface Member {
@@ -54,6 +55,7 @@ export const CLIENTS: Client[] = [
     id: 'appasamy',
     name: 'Appasamy',
     type: 'client',
+    hasRetainership: true,
     projects: [
       { id: 'autoref',   name: 'Autoref',       color: 'var(--c-autoref)',   billing: 'retainer' },
       { id: 'perimeter', name: 'Perimeter',     color: 'var(--c-perimeter)', billing: 'retainer' },
