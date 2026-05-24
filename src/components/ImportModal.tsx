@@ -1,28 +1,152 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { PROJECT_BY_ID, entryHours } from '@/lib/data';
-import type { Entry } from '@/lib/data';
+import {
+  ALL_PROJECTS,
+  PROJECT_BY_ID,
+  MEMBERS,
+  type Entry,
+  type BillingType,
+} from '@/lib/data';
 import ProjectPill from './ProjectPill';
 import { IconX, IconCheck, IconWarn } from './Icons';
 
-type ImportStatus = 'idle' | 'parsing' | 'preview' | 'done' | 'error';
-type EntryStatus = 'new' | 'duplicate';
+// ─────────────────────────────────────────────────────────────────────────────
+// External JSON format (our generated import file)
+// ─────────────────────────────────────────────────────────────────────────────
 
-interface ImportEntry { entry: Entry; status: EntryStatus; }
+interface ExternalHour {
+  member: string;
+  initials: string;
+  hours: number;
+}
 
-function parseJson(text: string): Entry[] {
-  const data = JSON.parse(text);
-  if (Array.isArray(data)) return data as Entry[];
-  if (Array.isArray(data.entries)) return data.entries as Entry[];
-  throw new Error('Unrecognized Chronicle backup format');
+interface ExternalEntry {
+  date: string;
+  project?: string;
+  projectName?: string;
+  client?: string;
+  clientName?: string;
+  task?: string;
+  taskDescription?: string;
+  isMeeting: boolean;
+  personCount?: number;
+  meetingDuration?: number;
+  billingType?: string;
+  hours?: ExternalHour[];
+}
+
+type AnyEntry = Entry | ExternalEntry;
+
+function isExternal(e: AnyEntry): e is ExternalEntry {
+  return !('projectId' in e) && ('project' in e || 'isMeeting' in e);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Conversion helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Map external billingType string → internal BillingType
+function toBilling(s: string | undefined): BillingType {
+  if (!s) return 'retainer';
+  const map: Record<string, BillingType> = {
+    RETAINERSHIP:         'retainer',
+    OUT_OF_RETAINERSHIP:  'out',
+    INTERNAL:             'internal',
+    retainer:             'retainer',
+    out:                  'out',
+    internal:             'internal',
+  };
+  return map[s] ?? 'retainer';
+}
+
+// Map external initials → member id (case-insensitive)
+// e.g. "G" → "g",  "DK" → "dk",  "Sid" → "sid"
+function initialsToMemberId(initials: string): string | null {
+  const match = MEMBERS.find(
+    m => m.init.toLowerCase() === initials.toLowerCase()
+  );
+  return match ? match.id : null;
+}
+
+// Convert ExternalEntry → internal Entry
+// Returns null if project cannot be resolved
+function convertExternal(e: ExternalEntry, nextId: number): Entry | null {
+  const projectName = (e.projectName || e.project || '').trim();
+  const clientName  = (e.clientName  || e.client  || '').trim();
+  const task        = (e.taskDescription || e.task || 'Untitled').trim();
+
+  // Find project by name + client (case-insensitive)
+  const proj = ALL_PROJECTS.find(
+    p =>
+      p.name.toLowerCase() === projectName.toLowerCase() &&
+      p.clientName.toLowerCase() === clientName.toLowerCase()
+  );
+
+  if (!proj) return null; // unknown project
+
+  // Convert hours array → Record<memberId, hours>
+  const hours: Record<string, number> = {};
+  if (!e.isMeeting && e.hours) {
+    for (const h of e.hours) {
+      const id = initialsToMemberId(h.initials || h.member);
+      if (id && Number(h.hours) > 0) {
+        hours[id] = Number(h.hours);
+      }
+    }
+  }
+
+  return {
+    id:              nextId,
+    date:            e.date,
+    projectId:       proj.id,
+    type:            e.isMeeting ? 'meeting' : 'task',
+    task,
+    billing:         toBilling(e.billingType ?? proj.billing),
+    hours,
+    meetingDuration: e.isMeeting ? (e.meetingDuration ?? 1) : undefined,
+    meetingPeople:   e.isMeeting ? (e.personCount ?? 2) : undefined,
+    createdAt:       Date.now(),
+    trashed:         false,
+  };
+}
+
+// Calculate display hours for a row
+function calcDisplayHours(e: AnyEntry): number {
+  if (isExternal(e)) {
+    if (e.isMeeting) return e.meetingDuration ?? 1;
+    return (e.hours ?? []).reduce((s, h) => s + (Number(h.hours) || 0), 0);
+  }
+  if (e.type === 'meeting') return (e.meetingDuration ?? 0);
+  return Object.values(e.hours).reduce((a, b) => a + b, 0);
 }
 
 function isDuplicate(e: Entry, existing: Entry[]): boolean {
-  return existing.some(x =>
-    !x.trashed && x.date === e.date && x.projectId === e.projectId && x.task === e.task
+  return existing.some(
+    x => !x.trashed && x.date === e.date && x.projectId === e.projectId && x.task === e.task
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+type ImportStatus = 'idle' | 'parsing' | 'preview' | 'importing' | 'done' | 'error';
+type EntryStatus  = 'new' | 'duplicate' | 'unknown';
+
+interface PreviewRow {
+  raw:          AnyEntry;
+  converted:    Entry | null;   // null = unknown project
+  status:       EntryStatus;
+  projectLabel: string;
+  clientLabel:  string;
+  taskLabel:    string;
+  displayHours: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Component
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface ImportModalProps {
   existingEntries: Entry[];
@@ -31,30 +155,90 @@ interface ImportModalProps {
 }
 
 export default function ImportModal({ existingEntries, onImport, onClose }: ImportModalProps) {
-  const [status, setStatus]   = useState<ImportStatus>('idle');
-  const [isDragOver, setDrag] = useState(false);
-  const [parsed, setParsed]   = useState<ImportEntry[]>([]);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [errorMsg, setError]  = useState('');
+  const [status,    setStatus]   = useState<ImportStatus>('idle');
+  const [isDragOver, setDrag]    = useState(false);
+  const [rows,      setRows]     = useState<PreviewRow[]>([]);
+  const [selected,  setSelected] = useState<Set<number>>(new Set());
+  const [errorMsg,  setError]    = useState('');
+  const [apiErrors, setApiErrors] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // ── Parse file ────────────────────────────────────────────────────────────
 
   function handleFile(file: File) {
     setStatus('parsing');
     const reader = new FileReader();
     reader.onload = ev => {
       try {
-        const entries = parseJson(ev.target!.result as string);
-        if (!entries.length) throw new Error('No entries found in file');
-        const items: ImportEntry[] = entries.map(e => ({
-          entry: e,
-          status: isDuplicate(e, existingEntries) ? 'duplicate' : 'new',
-        }));
-        const sel = new Set(
-          items.map((_, i) => i).filter(i => items[i].status === 'new')
+        const text = ev.target!.result as string;
+        const data = JSON.parse(text);
+        const rawEntries: AnyEntry[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data.entries)
+            ? data.entries
+            : null;
+
+        if (!rawEntries || rawEntries.length === 0) {
+          throw new Error('No entries found in file');
+        }
+
+        let nextId = Date.now();
+
+        const preview: PreviewRow[] = rawEntries.map(raw => {
+          if (isExternal(raw)) {
+            const converted = convertExternal(raw, nextId++);
+            const projectName = (raw.projectName || raw.project || '').trim();
+            const clientName  = (raw.clientName  || raw.client  || '').trim();
+            const task        = (raw.taskDescription || raw.task || '').trim();
+
+            if (!converted) {
+              return {
+                raw, converted: null,
+                status: 'unknown' as EntryStatus,
+                projectLabel: projectName,
+                clientLabel:  clientName,
+                taskLabel:    task,
+                displayHours: calcDisplayHours(raw),
+              };
+            }
+
+            const status: EntryStatus = isDuplicate(converted, existingEntries)
+              ? 'duplicate'
+              : 'new';
+
+            return {
+              raw, converted,
+              status,
+              projectLabel: PROJECT_BY_ID[converted.projectId]?.name ?? projectName,
+              clientLabel:  clientName,
+              taskLabel:    task,
+              displayHours: calcDisplayHours(raw),
+            };
+          }
+
+          // Format A — internal entry
+          const ie = raw as Entry;
+          const proj = PROJECT_BY_ID[ie.projectId];
+          const status: EntryStatus = isDuplicate(ie, existingEntries) ? 'duplicate' : 'new';
+
+          return {
+            raw: ie, converted: ie,
+            status,
+            projectLabel: proj?.name ?? ie.projectId,
+            clientLabel:  proj?.clientName ?? '',
+            taskLabel:    ie.task,
+            displayHours: calcDisplayHours(ie),
+          };
+        });
+
+        // Pre-select all "new" rows
+        const newIdxs = new Set(
+          preview.map((_, i) => i).filter(i => preview[i].status === 'new')
         );
-        setParsed(items);
-        setSelected(sel);
+        setRows(preview);
+        setSelected(newIdxs);
         setStatus('preview');
+
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : 'Could not parse file.');
         setStatus('error');
@@ -64,40 +248,84 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
   }
 
   function handleDrop(e: React.DragEvent) {
-    e.preventDefault();
-    setDrag(false);
+    e.preventDefault(); setDrag(false);
     const file = e.dataTransfer.files[0];
     if (file) handleFile(file);
   }
 
   function toggleRow(i: number) {
-    setSelected(prev => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; });
-  }
+  if (rows[i].status === 'unknown') return;
+  setSelected(prev => {
+    const n = new Set(prev);
+    if (n.has(i)) {
+      n.delete(i);
+    } else {
+      n.add(i);
+    }
+    return n;
+  });
+}
 
-  function handleConfirm() {
-    const toImport = Array.from(selected).map(i => ({
-      ...parsed[i].entry,
-      id: Date.now() + i,
-      createdAt: Date.now(),
-      trashed: false,
-    } as Entry));
+  // ── Confirm ───────────────────────────────────────────────────────────────
+
+  async function handleConfirm() {
+    setStatus('importing');
+
+    const toImport: Entry[] = Array.from(selected)
+      .map(i => rows[i].converted)
+      .filter((e): e is Entry => e !== null);
+
+    // Update local state immediately
     onImport(toImport);
+
+    // Also persist to database via API
+    // Build external entries to send to /api/import
+    const externalRows = Array.from(selected)
+      .map(i => rows[i])
+      .filter(r => isExternal(r.raw) && r.converted !== null)
+      .map(r => r.raw as ExternalEntry);
+
+    if (externalRows.length > 0) {
+      try {
+        const res = await fetch('/api/import', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ entries: externalRows, skipDuplicates: true }),
+        });
+        const data = await res.json() as { imported: number; skipped: number; errors: string[] };
+        if (data.errors?.length) setApiErrors(data.errors);
+      } catch {
+        // API failed but local state is already updated — non-fatal
+        setApiErrors(['Could not save to database. Entries shown in app but may not persist after refresh.']);
+      }
+    }
+
     setStatus('done');
   }
 
-  const newCount = parsed.filter(p => p.status === 'new').length;
-  const dupCount = parsed.filter(p => p.status === 'duplicate').length;
-  const selCount = selected.size;
+  // ── Counts ────────────────────────────────────────────────────────────────
+
+  const newCount     = rows.filter(r => r.status === 'new').length;
+  const dupCount     = rows.filter(r => r.status === 'duplicate').length;
+  const unknownCount = rows.filter(r => r.status === 'unknown').length;
+  const selCount     = selected.size;
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="modal-scrim" style={{ zIndex: 550 }} onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
+
         <div className="modal-h">
           <h2>Import entries</h2>
-          <button className="btn btn-ghost btn-icon" onClick={onClose}><IconX size={16} /></button>
+          <button className="btn btn-ghost btn-icon" onClick={onClose}>
+            <IconX size={16} />
+          </button>
         </div>
 
         <div className="modal-body">
+
+          {/* ── Idle / Error ─────────────────────────────────────────────── */}
           {(status === 'idle' || status === 'error') && (
             <>
               <div
@@ -107,61 +335,103 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
                 onDragLeave={() => setDrag(false)}
                 onDrop={handleDrop}
               >
-                {/* Illustrated SVG */}
-                <svg width="56" height="56" viewBox="0 0 56 56" fill="none" style={{ margin: '0 auto', display: 'block', marginBottom: 12 }}>
-                  <rect x="10" y="6" width="28" height="36" rx="3" stroke="currentColor" strokeWidth="1.5" fill="none" opacity="0.5"/>
-                  <rect x="18" y="2" width="28" height="36" rx="3" stroke="currentColor" strokeWidth="1.5" fill="none" opacity="0.3"/>
-                  <path d="M22 24l8 8 8-8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" opacity="0.7"/>
-                  <line x1="30" y1="18" x2="30" y2="32" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" opacity="0.7"/>
-                  <line x1="22" y1="35" x2="38" y2="35" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.5"/>
+                <svg width="56" height="56" viewBox="0 0 56 56" fill="none"
+                  style={{ margin: '0 auto 12px', display: 'block' }}>
+                  <rect x="10" y="6" width="28" height="36" rx="3" stroke="currentColor"
+                    strokeWidth="1.5" fill="none" opacity="0.5"/>
+                  <rect x="18" y="2" width="28" height="36" rx="3" stroke="currentColor"
+                    strokeWidth="1.5" fill="none" opacity="0.3"/>
+                  <path d="M22 24l8 8 8-8" stroke="currentColor" strokeWidth="1.8"
+                    strokeLinecap="round" strokeLinejoin="round" opacity="0.7"/>
+                  <line x1="30" y1="18" x2="30" y2="32" stroke="currentColor"
+                    strokeWidth="1.8" strokeLinecap="round" opacity="0.7"/>
+                  <line x1="22" y1="35" x2="38" y2="35" stroke="currentColor"
+                    strokeWidth="1.5" strokeLinecap="round" opacity="0.5"/>
                 </svg>
                 <h3>Drop your Chronicle backup here</h3>
                 <p>or click to choose a file</p>
                 <div className="formats">Accepts · .json (Chronicle backup)</div>
               </div>
               <input
-                ref={fileRef} type="file" accept=".json"
+                ref={fileRef}
+                type="file"
+                accept=".json"
                 style={{ display: 'none' }}
-                onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); e.target.value = ''; }}
+                onChange={e => {
+                  if (e.target.files?.[0]) handleFile(e.target.files[0]);
+                  e.target.value = '';
+                }}
               />
               {status === 'error' && (
                 <div className="import-error">
-                  <IconWarn size={14} />
-                  {errorMsg}
+                  <IconWarn size={14} /> {errorMsg}
                 </div>
               )}
             </>
           )}
 
-          {status === 'parsing' && (
-            <div className="import-loading">Parsing file…</div>
-          )}
-
-          {status === 'done' && (
-            <div className="import-done">
-              <div className="import-done-ring"><IconCheck size={32} /></div>
-              <p className="import-done-msg">{selCount} {selCount === 1 ? 'entry' : 'entries'} imported successfully.</p>
+          {/* ── Parsing / Importing ──────────────────────────────────────── */}
+          {(status === 'parsing' || status === 'importing') && (
+            <div className="import-loading">
+              {status === 'parsing' ? 'Parsing file…' : 'Importing entries…'}
             </div>
           )}
 
+          {/* ── Done ─────────────────────────────────────────────────────── */}
+          {status === 'done' && (
+            <div className="import-done">
+              <div className="import-done-ring"><IconCheck size={32} /></div>
+              <p className="import-done-msg">
+                {selCount} {selCount === 1 ? 'entry' : 'entries'} imported successfully.
+              </p>
+              {unknownCount > 0 && (
+                <div className="import-error" style={{ marginTop: 10 }}>
+                  <IconWarn size={14} />
+                  {unknownCount} {unknownCount === 1 ? 'entry was' : 'entries were'} skipped —
+                  project not found in Chronicle.
+                </div>
+              )}
+              {apiErrors.map((e, i) => (
+                <div key={i} className="import-error" style={{ marginTop: 6 }}>
+                  <IconWarn size={12} /> {e}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── Preview ──────────────────────────────────────────────────── */}
           {status === 'preview' && (
             <>
               <div className="import-summary">
                 <span className="status-tag new">{newCount} new</span>
-                {dupCount > 0 && <span className="status-tag dup">{dupCount} duplicate</span>}
-                <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--ink-fade)', fontFamily: 'var(--font-mono)' }}>
+                {dupCount > 0 && (
+                  <span className="status-tag dup">{dupCount} duplicate</span>
+                )}
+                {unknownCount > 0 && (
+                  <span className="status-tag unknown" style={{
+                    background: 'var(--warning-bg, #fef3c7)',
+                    color: 'var(--warning-text, #92400e)',
+                    padding: '2px 8px',
+                    borderRadius: 4,
+                    fontSize: 11,
+                    fontFamily: 'var(--font-mono)',
+                  }}>
+                    {unknownCount} unknown project
+                  </span>
+                )}
+                <span style={{
+                  marginLeft: 'auto',
+                  fontSize: 11,
+                  color: 'var(--ink-fade)',
+                  fontFamily: 'var(--font-mono)',
+                }}>
                   {selCount} selected
                 </span>
               </div>
 
-              {parsed.length === 0 ? (
+              {rows.length === 0 ? (
                 <div className="empty" style={{ padding: 40 }}>
-                  <svg width="48" height="48" viewBox="0 0 48 48" fill="none" className="empty-illustration" style={{ margin: '0 auto 16px', display: 'block' }}>
-                    <circle cx="24" cy="24" r="18" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-                    <line x1="16" y1="16" x2="32" y2="32" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                    <line x1="32" y1="16" x2="16" y2="32" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  </svg>
-                  <h3>No entries found in file</h3>
+                  <h3>No entries found</h3>
                   <p>Make sure the file is a valid Chronicle JSON backup.</p>
                 </div>
               ) : (
@@ -173,53 +443,80 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
                       <th style={{ width: 180 }}>Project</th>
                       <th>Task</th>
                       <th className="num" style={{ width: 60 }}>Hours</th>
-                      <th style={{ width: 80 }}>Status</th>
+                      <th style={{ width: 90 }}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {parsed.map((item, i) => {
-                      const proj = PROJECT_BY_ID[item.entry.projectId];
-                      const isSel = selected.has(i);
-                      
-                      // Safely extract hours without using 'any'
-                      const rawData = item.entry as unknown as {
-                        hours?: Array<{ hours: string | number }> | string | number;
-                        meetingDuration?: string | number;
-                      };
-
-                      const rawHours = rawData.hours;
-                      const safeHrs = Array.isArray(rawHours) && rawHours.length > 0
-                        ? rawHours.reduce((sum: number, h: { hours: string | number }) => sum + (Number(h.hours) || 0), 0)
-                        : Number(entryHours(item.entry)) || Number(rawData.meetingDuration) || 0;
+                    {rows.map((row, i) => {
+                      const isSel    = selected.has(i);
+                      const isUnknown = row.status === 'unknown';
+                      const proj     = row.converted ? PROJECT_BY_ID[row.converted.projectId] : null;
+                      const h        = row.displayHours;
+                      const isMtg    = isExternal(row.raw)
+                        ? (row.raw as ExternalEntry).isMeeting
+                        : (row.raw as Entry).type === 'meeting';
 
                       return (
-                        <tr key={i} className="entry" onClick={() => toggleRow(i)}
-                          style={{ opacity: item.status === 'duplicate' ? 0.55 : 1 }}>
+                        <tr
+                          key={i}
+                          className="entry"
+                          onClick={() => toggleRow(i)}
+                          style={{
+                            opacity: (row.status === 'duplicate' || isUnknown) ? 0.5 : 1,
+                            cursor: isUnknown ? 'not-allowed' : 'pointer',
+                          }}
+                        >
                           <td>
-                            <div className={`row-checkbox${isSel ? ' checked' : ''}`}
-                              style={{ opacity: 1, pointerEvents: 'auto' }} />
+                            {!isUnknown && (
+                              <div className={`row-checkbox${isSel ? ' checked' : ''}`} />
+                            )}
                           </td>
                           <td className="mono" style={{ fontSize: 12, color: 'var(--ink-fade)' }}>
-                            {item.entry.date}
+                            {row.raw.date}
                           </td>
                           <td>
-                            {proj
-                              ? <ProjectPill project={proj} clientName={proj.clientId !== 'goku' ? proj.clientName : undefined} />
-                              : <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-ghost)' }}>{item.entry.projectId}</span>
-                            }
+                            {proj ? (
+                              <ProjectPill
+                                project={proj}
+                                clientName={proj.clientId !== 'goku' ? proj.clientName : undefined}
+                              />
+                            ) : (
+                              <span style={{
+                                fontFamily: 'var(--font-mono)',
+                                fontSize: 11,
+                                color: isUnknown ? 'var(--warning-text, #92400e)' : 'var(--ink-ghost)',
+                              }}>
+                                {row.clientLabel ? `${row.clientLabel} · ` : ''}
+                                {row.projectLabel}
+                                {isUnknown && ' ⚠'}
+                              </span>
+                            )}
                           </td>
                           <td className="task-cell" style={{ fontSize: 12.5 }}>
-                            {item.entry.type === 'meeting' && <span className="meet">Meeting</span>}
-                            {item.entry.task}
+                            {isMtg && <span className="meet">Meeting</span>}
+                            {row.taskLabel}
                           </td>
                           <td className="hrs">
-                            <span className="v">{safeHrs % 1 === 0 ? safeHrs : safeHrs.toFixed(1)}</span>
+                            <span className="v">{h % 1 === 0 ? h : h.toFixed(1)}</span>
                             <span className="u">h</span>
                           </td>
                           <td>
-                            <span className={`status-tag ${item.status}`}>
-                              {item.status === 'new' ? 'New' : 'Duplicate'}
-                            </span>
+                            {isUnknown ? (
+                              <span className="status-tag" style={{
+                                background: 'var(--warning-bg, #fef3c7)',
+                                color: 'var(--warning-text, #92400e)',
+                                padding: '2px 8px',
+                                borderRadius: 4,
+                                fontSize: 11,
+                                fontFamily: 'var(--font-mono)',
+                              }}>
+                                Unknown
+                              </span>
+                            ) : (
+                              <span className={`status-tag ${row.status}`}>
+                                {row.status === 'new' ? 'New' : 'Duplicate'}
+                              </span>
+                            )}
                           </td>
                         </tr>
                       );
@@ -227,19 +524,40 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
                   </tbody>
                 </table>
               )}
+
+              {unknownCount > 0 && (
+                <p style={{
+                  marginTop: 12,
+                  fontSize: 12,
+                  color: 'var(--ink-fade)',
+                  fontFamily: 'var(--font-mono)',
+                }}>
+                  ⚠ Unknown project rows cannot be imported.
+                  Add the project in Settings → Clients & Projects first.
+                </p>
+              )}
             </>
           )}
+
         </div>
 
+        {/* Footer */}
         <div className="modal-footer">
           {status === 'preview' && (
             <>
-              <button className="btn btn-ghost" onClick={() => { setStatus('idle'); setParsed([]); setSelected(new Set()); }}>
+              <button
+                className="btn btn-ghost"
+                onClick={() => { setStatus('idle'); setRows([]); setSelected(new Set()); }}
+              >
                 Back
               </button>
               <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleConfirm} disabled={selCount === 0}
-                style={{ opacity: selCount === 0 ? 0.45 : 1 }}>
+              <button
+                className="btn btn-primary"
+                onClick={handleConfirm}
+                disabled={selCount === 0}
+                style={{ opacity: selCount === 0 ? 0.45 : 1 }}
+              >
                 <IconCheck size={14} />
                 Import {selCount} {selCount === 1 ? 'entry' : 'entries'}
               </button>
@@ -254,6 +572,7 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
             </button>
           )}
         </div>
+
       </div>
     </div>
   );
