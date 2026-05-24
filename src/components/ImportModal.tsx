@@ -180,7 +180,18 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
                     {parsed.map((item, i) => {
                       const proj = PROJECT_BY_ID[item.entry.projectId];
                       const isSel = selected.has(i);
-                      const hrs = entryHours(item.entry);
+                      
+                      // Safely extract hours without using 'any'
+                      const rawData = item.entry as unknown as {
+                        hours?: Array<{ hours: string | number }> | string | number;
+                        meetingDuration?: string | number;
+                      };
+
+                      const rawHours = rawData.hours;
+                      const safeHrs = Array.isArray(rawHours) && rawHours.length > 0
+                        ? rawHours.reduce((sum: number, h: { hours: string | number }) => sum + (Number(h.hours) || 0), 0)
+                        : Number(entryHours(item.entry)) || Number(rawData.meetingDuration) || 0;
+
                       return (
                         <tr key={i} className="entry" onClick={() => toggleRow(i)}
                           style={{ opacity: item.status === 'duplicate' ? 0.55 : 1 }}>
@@ -202,7 +213,7 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
                             {item.entry.task}
                           </td>
                           <td className="hrs">
-                            <span className="v">{hrs % 1 === 0 ? hrs : hrs.toFixed(1)}</span>
+                            <span className="v">{safeHrs % 1 === 0 ? safeHrs : safeHrs.toFixed(1)}</span>
                             <span className="u">h</span>
                           </td>
                           <td>
