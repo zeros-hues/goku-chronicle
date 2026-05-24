@@ -3,19 +3,24 @@ import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
 interface ParsedHour {
-  memberInitials: string
+  memberInitials?: string
+  initials?: string
+  member?: string
   hours: number
 }
 
 interface ParsedEntry {
   date: string
-  projectName: string
-  clientName: string
-  taskDescription: string
+  projectName?: string
+  project?: string
+  clientName?: string
+  client?: string
+  taskDescription?: string
+  task?: string
   isMeeting: boolean
   personCount?: number
   meetingDuration?: number
-  hours: ParsedHour[]
+  hours?: ParsedHour[]
 }
 
 export async function POST(req: NextRequest) {
@@ -37,14 +42,20 @@ export async function POST(req: NextRequest) {
     const errors: string[] = []
 
     for (const entry of entries) {
-      // Find project (case-insensitive name + client)
+      // Safe extraction mapping both interface keys and JSON keys
+      const safeProjectName = entry.projectName || entry.project || ""
+      const safeClientName = entry.clientName || entry.client || ""
+      const safeTaskDescription = entry.taskDescription || entry.task || "Untitled Task"
+
+      // Find project safely with inline TypeScript typing for the nested client
       const project = allProjects.find(
-        p =>
-          p.name.toLowerCase() === entry.projectName.toLowerCase() &&
-          p.client.name.toLowerCase() === entry.clientName.toLowerCase()
+        (p: { id: string; name: string; client: { name: string } }) =>
+          p.name.toLowerCase() === safeProjectName.toLowerCase() &&
+          p.client.name.toLowerCase() === safeClientName.toLowerCase()
       )
+
       if (!project) {
-        errors.push(`Project "${entry.projectName}" for client "${entry.clientName}" not found`)
+        errors.push(`Project "${safeProjectName}" for client "${safeClientName}" not found`)
         skipped++
         continue
       }
@@ -55,30 +66,36 @@ export async function POST(req: NextRequest) {
         where: {
           date: entryDate,
           projectId: project.id,
-          taskDescription: entry.taskDescription,
+          taskDescription: safeTaskDescription,
           deletedAt: null,
         },
       })
+
       if (duplicate) {
         if (skipDuplicates) { skipped++; continue }
-        errors.push(`Duplicate entry for "${entry.taskDescription}" on ${entry.date}`)
+        errors.push(`Duplicate entry for "${safeTaskDescription}" on ${entry.date}`)
         skipped++
         continue
       }
 
-      // Resolve team members by initials
+      // Resolve team members safely with inline TypeScript typing
       const hours = (entry.hours ?? []).map((h: ParsedHour) => {
+        const safeInitials = h.memberInitials || h.initials || ""
+        
+        if (!safeInitials) return null
+
         const member = allMembers.find(
-          m => m.initials.toLowerCase() === h.memberInitials.toLowerCase()
+          (m: { id: string; initials: string }) => m.initials.toLowerCase() === safeInitials.toLowerCase()
         )
         return member ? { teamMemberId: member.id, hours: h.hours } : null
       }).filter(Boolean) as { teamMemberId: string; hours: number }[]
 
+      // Create the entry
       await prisma.taskEntry.create({
         data: {
           date: entryDate,
           projectId: project.id,
-          taskDescription: entry.taskDescription,
+          taskDescription: safeTaskDescription,
           isMeeting: entry.isMeeting,
           personCount: entry.personCount ?? null,
           meetingDuration: entry.meetingDuration ?? null,
