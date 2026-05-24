@@ -5,7 +5,6 @@ import { extractTimesheetFromImage } from '@/lib/ai-provider'
 
 // In-memory state (resets on cold start — acceptable for MVP)
 const pendingEntries: Record<string, { entries: PendingEntry[]; extractedDate: string | null }> = {}
-const pendingRegistration: Record<string, boolean> = {}
 
 interface PendingEntry {
   rowNumber: number
@@ -64,20 +63,7 @@ async function processMessage(body: Record<string, unknown>) {
     const member = await prisma.teamMember.findFirst({ where: { whatsappNumber: from } })
 
     if (!member) {
-      if (pendingRegistration[from]) {
-        // They're replying with their name
-        const name = (message.text?.body ?? '').trim()
-        if (name) {
-          await prisma.teamMember.create({
-            data: { name, initials: name.slice(0, 2).toUpperCase() },
-          })
-          delete pendingRegistration[from]
-          await sendWhatsAppMessage(from, `✅ Welcome, ${name}! You're now registered. Send a photo of your timesheet to log hours.`)
-        }
-      } else {
-        pendingRegistration[from] = true
-        await sendWhatsAppMessage(from, "Hi! I don't recognise this number. What's your name?")
-      }
+      await sendWhatsAppMessage(from, 'This is a private assistant. Contact your administrator to get access.')
       return
     }
 
