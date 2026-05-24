@@ -1,0 +1,99 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                String    @id @default(cuid())
+  username          String    @unique
+  password          String
+  hoursTarget       Float     @default(8)
+  overtimeThreshold Float     @default(8)
+  reminderEnabled   Boolean   @default(false)
+  reminderTime      String    @default("18:00")
+  holidays          Holiday[]
+  createdAt         DateTime  @default(now())
+}
+
+model Holiday {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  date      DateTime @db.Date
+  label     String?
+  createdAt DateTime @default(now())
+}
+
+model Client {
+  id              String    @id @default(cuid())
+  name            String    @unique
+  hasRetainership Boolean   @default(false)
+  projects        Project[]
+  createdAt       DateTime  @default(now())
+}
+
+model Project {
+  id          String      @id @default(cuid())
+  name        String
+  clientId    String
+  client      Client      @relation(fields: [clientId], references: [id])
+  billingType BillingType @default(INTERNAL)
+  archivedAt  DateTime?
+  taskEntries TaskEntry[]
+  createdAt   DateTime    @default(now())
+
+  @@unique([name, clientId])
+}
+
+enum BillingType {
+  RETAINERSHIP
+  OUT_OF_RETAINERSHIP
+  INTERNAL
+}
+
+model TeamMember {
+  id             String     @id @default(cuid())
+  name           String
+  initials       String
+  whatsappNumber String?    @unique
+  isActive       Boolean    @default(true)
+  taskHours      TaskHour[]
+  createdAt      DateTime   @default(now())
+}
+
+model TaskEntry {
+  id               String       @id @default(cuid())
+  date             DateTime     @db.Date
+  projectId        String?
+  project          Project?     @relation(fields: [projectId], references: [id])
+  taskDescription  String
+  isMeeting        Boolean      @default(false)
+  personCount      Int?
+  meetingDuration  Float?
+  billingOverride  BillingType?
+  deletedAt        DateTime?
+  source           EntrySource  @default(MANUAL)
+  submittedByPhone String?
+  taskHours        TaskHour[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+}
+
+enum EntrySource {
+  MANUAL
+  WHATSAPP_BOT
+}
+
+model TaskHour {
+  id           String     @id @default(cuid())
+  taskEntryId  String
+  taskEntry    TaskEntry  @relation(fields: [taskEntryId], references: [id], onDelete: Cascade)
+  teamMemberId String
+  teamMember   TeamMember @relation(fields: [teamMemberId], references: [id])
+  hours        Float
+
+  @@unique([taskEntryId, teamMemberId])
+}

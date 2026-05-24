@@ -1,32 +1,37 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ENTRIES, MEMBERS, HOLIDAYS, entryHours, fmtDate, isWeekend, TODAY } from '@/lib/data';
+import { signIn } from 'next-auth/react';
+import { MEMBERS, HOLIDAYS, fmtDate, isWeekend, TODAY } from '@/lib/data';
 
 const TODAY_STR = fmtDate(TODAY);
 
-const VALID_CREDENTIALS = [
-  { email: 'admin@gokustudio.com', password: 'chronicle2026' },
-  { email: 'gokul@gokustudio.com', password: 'chronicle2026' },
-];
+interface YearGridDay {
+  date: string;
+  hours: number;
+  isToday: boolean;
+  isHoliday: boolean;
+  isWeekend: boolean;
+}
 
-function buildHeatmap() {
-  const daily: Record<string, number> = {};
-  ENTRIES.filter(e => !e.trashed).forEach(e => {
-    daily[e.date] = (daily[e.date] ?? 0) + entryHours(e);
-  });
-
+function buildHeatmap(daily: Record<string, number>): YearGridDay[] {
   const start = new Date(TODAY);
   start.setDate(start.getDate() - 26 * 7);
   const dow = (start.getDay() + 6) % 7;
   start.setDate(start.getDate() - dow);
 
-  const cells: { date: string; hours: number; isToday: boolean; isHoliday: boolean; isWeekend: boolean }[] = [];
+  const cells: YearGridDay[] = [];
   const d = new Date(start);
   while (d <= new Date(TODAY)) {
     const s = fmtDate(d);
-    cells.push({ date: s, hours: daily[s] ?? 0, isToday: s === TODAY_STR, isHoliday: !!HOLIDAYS[s], isWeekend: isWeekend(d) });
+    cells.push({
+      date: s,
+      hours: daily[s] ?? 0,
+      isToday: s === TODAY_STR,
+      isHoliday: !!HOLIDAYS[s],
+      isWeekend: isWeekend(d),
+    });
     d.setDate(d.getDate() + 1);
   }
   return cells;
@@ -41,7 +46,7 @@ function heatColor(h: number) {
   return             'oklch(0.48 0.16 37)';
 }
 
-function MonthAxis({ cells, weeks }: { cells: ReturnType<typeof buildHeatmap>; weeks: number }) {
+function MonthAxis({ cells, weeks }: { cells: YearGridDay[]; weeks: number }) {
   const labels: { col: number; label: string }[] = [];
   cells.forEach((cell, i) => {
     const col = Math.floor(i / 7);
@@ -63,16 +68,32 @@ function MonthAxis({ cells, weeks }: { cells: ReturnType<typeof buildHeatmap>; w
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email,    setEmail]    = useState('');
-  const [password, setPassword] = useState('');
-  const [error,    setError]    = useState('');
-  const [shaking,  setShaking]  = useState(false);
+  const [username,  setUsername]  = useState('');
+  const [password,  setPassword]  = useState('');
+  const [error,     setError]     = useState('');
+  const [shaking,   setShaking]   = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  const cells         = buildHeatmap();
-  const weeks         = Math.ceil(cells.length / 7);
-  const totalHours    = ENTRIES.filter(e => !e.trashed).reduce((s, e) => s + entryHours(e), 0);
-  const totalEntries  = ENTRIES.filter(e => !e.trashed).length;
-  const projectCount  = new Set(ENTRIES.filter(e => !e.trashed).map(e => e.projectId)).size;
+  // Year-grid state (fetched from public API)
+  const [daily,        setDaily]        = useState<Record<string, number>>({});
+  const [totalHours,   setTotalHours]   = useState(0);
+  const [totalEntries, setTotalEntries] = useState(0);
+  const [projectCount, setProjectCount] = useState(0);
+
+  useEffect(() => {
+    fetch('/api/year-grid')
+      .then(r => r.json())
+      .then((data: { days: Record<string, number>; totalHours: number; totalEntries: number; projectCount: number }) => {
+        setDaily(data.days ?? {});
+        setTotalHours(data.totalHours ?? 0);
+        setTotalEntries(data.totalEntries ?? 0);
+        setProjectCount(data.projectCount ?? 0);
+      })
+      .catch(() => {}); // silently fail — empty heatmap is fine
+  }, []);
+
+  const cells = buildHeatmap(daily);
+  const weeks = Math.ceil(cells.length / 7);
   const activeMembers = MEMBERS.filter(m => m.active);
 
   function shake() {
@@ -80,10 +101,10 @@ export default function LoginPage() {
     setTimeout(() => setShaking(false), 500);
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!email.trim()) {
-      setError('Please enter your email address.');
+    if (!username.trim()) {
+      setError('Please enter your username.');
       shake();
       return;
     }
@@ -92,13 +113,22 @@ export default function LoginPage() {
       shake();
       return;
     }
-    const valid = VALID_CREDENTIALS.some(c => c.email === email.toLowerCase() && c.password === password);
-    if (!valid) {
-      setError('Incorrect email or password.');
+
+    setSubmitting(true);
+    const result = await signIn('credentials', {
+      username: username.trim(),
+      password,
+      redirect: false,
+    });
+    setSubmitting(false);
+
+    if (!result?.ok) {
+      setError('Incorrect username or password.');
       shake();
       setPassword('');
       return;
     }
+
     router.push('/');
   }
 
@@ -123,7 +153,7 @@ export default function LoginPage() {
             <div className="ocean-counter" style={{ marginBottom: 32, alignSelf: 'flex-start' }}>
               <div className="oc-n">{Math.round(totalHours)}<span className="oc-of">h</span></div>
               <div className="oc-l">Total hours logged</div>
-              <div className="oc-sub">{totalEntries} entries across {projectCount} projects in 2026</div>
+              <div className="oc-sub">{totalEntries} entries across {projectCount} projects in {new Date().getFullYear()}</div>
             </div>
 
             <div className="ledger-heatmap">
@@ -171,7 +201,7 @@ export default function LoginPage() {
             </div>
 
             <div className="annotation" style={{ position: 'absolute', bottom: 56, right: 72 }}>
-              2026 so far ↗
+              {new Date().getFullYear()} so far ↗
             </div>
           </div>
         </div>
@@ -186,15 +216,16 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit} noValidate>
             <div className="input-block">
-              <label className="field-label">Email</label>
+              <label className="field-label">Username</label>
               <input
-                type="email"
+                type="text"
                 className={'field-input' + (error ? ' field-error' : '')}
-                placeholder="you@gokustudio.com"
-                value={email}
-                onChange={e => { setEmail(e.target.value); setError(''); }}
-                autoComplete="email"
+                placeholder="admin"
+                value={username}
+                onChange={e => { setUsername(e.target.value); setError(''); }}
+                autoComplete="username"
                 autoFocus
+                disabled={submitting}
               />
             </div>
             <div className="input-block">
@@ -206,6 +237,7 @@ export default function LoginPage() {
                 value={password}
                 onChange={e => { setPassword(e.target.value); setError(''); }}
                 autoComplete="current-password"
+                disabled={submitting}
               />
             </div>
 
@@ -213,9 +245,9 @@ export default function LoginPage() {
               <div className="login-error">{error}</div>
             )}
 
-            <button type="submit" className="btn btn-primary"
-              style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}>
-              Sign in
+            <button type="submit" className="btn btn-primary" disabled={submitting}
+              style={{ width: '100%', justifyContent: 'center', marginTop: 8, opacity: submitting ? 0.7 : 1 }}>
+              {submitting ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
 
@@ -228,7 +260,7 @@ export default function LoginPage() {
 
           <div className="recent-users">
             {activeMembers.map(m => (
-              <div key={m.id} className="ru" onClick={() => router.push('/')}>
+              <div key={m.id} className="ru" title={m.name}>
                 <div className="av" style={{ background: m.color }}>{m.init.slice(0, 1)}</div>
                 <span className="nm">{m.init}</span>
               </div>

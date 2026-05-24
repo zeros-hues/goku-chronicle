@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { signOut } from 'next-auth/react';
 import Sidebar from '@/components/Sidebar';
 import TopBar from '@/components/TopBar';
 import Timesheet from '@/components/Timesheet';
@@ -11,8 +12,9 @@ import SettingsPage from '@/components/SettingsPage';
 import EntryDrawer from '@/components/NewEntryDrawer';
 import ImportModal from '@/components/ImportModal';
 import ShortcutsDialog from '@/components/ShortcutsDialog';
-import { MEMBERS, ENTRIES, TODAY, dowFull, monShort } from '@/lib/data';
+import { MEMBERS, TODAY, dowFull, monShort } from '@/lib/data';
 import type { View, Theme, Entry } from '@/lib/data';
+import * as api from '@/lib/api';
 import { IconPlus, IconImport, IconTimesheet, IconDashboard, IconCheck } from '@/components/Icons';
 
 /* ── Toast types ─────────────────────────────────────────── */
@@ -38,32 +40,51 @@ function getTopBar(view: View): { title: string; sub: string } {
 }
 
 export default function Page() {
-  const [view, setView]           = useState<View>('timesheet');
-  const [theme, setTheme]         = useState<Theme>(() => {
+  const [view, setView]             = useState<View>('timesheet');
+  const [theme, setTheme]           = useState<Theme>(() => {
     if (typeof window !== 'undefined') {
       return (localStorage.getItem('chronicle-theme') as Theme) ?? 'light';
     }
     return 'light';
   });
-  const [entries, setEntries]     = useState<Entry[]>(ENTRIES);
+  const [entries, setEntries]       = useState<Entry[]>([]);
+  const [loading, setLoading]       = useState(true);
   const [showDrawer, setShowDrawer] = useState(false);
-  const [editEntry, setEditEntry] = useState<Entry | undefined>(undefined);
+  const [editEntry, setEditEntry]   = useState<Entry | undefined>(undefined);
   const [showImport, setShowImport] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [newEntryId, setNewEntryId] = useState<number | null>(null);
-  const [toasts, setToasts]       = useState<ToastItem[]>([]);
-  const toastTimers               = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
-  const searchRef                 = useRef<HTMLInputElement>(null);
+  const [toasts, setToasts]         = useState<ToastItem[]>([]);
+  const toastTimers                 = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const searchRef                   = useRef<HTMLInputElement>(null);
 
   const trashCount = entries.filter(e => e.trashed).length;
 
-  // Persist theme to localStorage
+  /* ── Initial data load ─────────────────────────────────── */
+  useEffect(() => {
+    async function load() {
+      try {
+        const [active, trashed] = await Promise.all([
+          api.fetchEntries(),
+          api.fetchTrash(),
+        ]);
+        setEntries([...active, ...trashed]);
+      } catch {
+        // Will show empty state — user can still add entries
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, []);
+
+  /* ── Theme persistence ─────────────────────────────────── */
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('chronicle-theme', theme);
   }, [theme]);
 
-  // Toast system
+  /* ── Toast system ──────────────────────────────────────── */
   const showToast = useCallback((text: string, action?: { label: string; cb: () => void }) => {
     const id = ++toastSeq;
     setToasts(prev => [...prev.slice(-2), { id, text, action }]);
@@ -80,36 +101,82 @@ export default function Page() {
     if (timer) { clearTimeout(timer); toastTimers.current.delete(id); }
   }
 
-  // Entry CRUD
-  function handleSave(entry: Entry) {
+  /* ── Entry CRUD (all hit the API) ──────────────────────── */
+  async function handleSave(entry: Entry) {
+    // Optimistic insert with the temp ID from the drawer
     setEntries(prev => [entry, ...prev]);
     setNewEntryId(entry.id);
-    showToast('Entry saved');
-    setTimeout(() => setNewEntryId(null), 3000);
+    try {
+      const saved = await api.createEntry(entry);
+      // Swap temp entry for the real one returned by the API
+      setEntries(prev => prev.map(e => e.id === entry.id ? saved : e));
+      setNewEntryId(saved.id);
+      showToast('Entry saved');
+      setTimeout(() => setNewEntryId(null), 3000);
+    } catch {
+      setEntries(prev => prev.filter(e => e.id !== entry.id));
+      showToast('Failed to save entry');
+    }
   }
 
-  function handleUpdate(updatedEntry: Entry) {
+  async function handleUpdate(updatedEntry: Entry) {
     setEntries(prev => prev.map(e => e.id === updatedEntry.id ? updatedEntry : e));
     setNewEntryId(updatedEntry.id);
-    showToast('Entry updated');
-    setTimeout(() => setNewEntryId(null), 3000);
+    try {
+      const saved = await api.updateEntry(updatedEntry);
+      setEntries(prev => prev.map(e => e.id === updatedEntry.id ? saved : e));
+      setNewEntryId(saved.id);
+      showToast('Entry updated');
+      setTimeout(() => setNewEntryId(null), 3000);
+    } catch {
+      showToast('Failed to update entry');
+    }
   }
 
-  function handleTrash(ids: Set<number>) {
+  async function handleTrash(ids: Set<number>) {
     setEntries(prev => prev.map(e => ids.has(e.id) ? { ...e, trashed: true } : e));
+    try {
+      await api.trashEntries(Array.from(ids));
+    } catch {
+      // Revert on failure
+      setEntries(prev => prev.map(e => ids.has(e.id) ? { ...e, trashed: false } : e));
+      showToast('Failed to trash entries');
+    }
   }
 
-  function handleRestore(ids: Set<number>) {
+  async function handleRestore(ids: Set<number>) {
     setEntries(prev => prev.map(e => ids.has(e.id) ? { ...e, trashed: false } : e));
+    try {
+      await api.restoreEntries(Array.from(ids));
+    } catch {
+      setEntries(prev => prev.map(e => ids.has(e.id) ? { ...e, trashed: true } : e));
+      showToast('Failed to restore entries');
+    }
   }
 
-  function handleDelete(ids: Set<number>) {
+  async function handleDelete(ids: Set<number>) {
     setEntries(prev => prev.filter(e => !ids.has(e.id)));
+    try {
+      await api.permanentDeleteEntries(Array.from(ids));
+    } catch {
+      showToast('Failed to permanently delete entries');
+    }
   }
 
-  function handleImport(newEntries: Entry[]) {
-    setEntries(prev => [...newEntries, ...prev]);
-    showToast(`${newEntries.length} ${newEntries.length === 1 ? 'entry' : 'entries'} imported`);
+  async function handleImport(newEntries: Entry[]) {
+    try {
+      const result = await api.importEntries(newEntries);
+      // Re-fetch to get real entries from DB
+      const [active, trashed] = await Promise.all([
+        api.fetchEntries(),
+        api.fetchTrash(),
+      ]);
+      setEntries([...active, ...trashed]);
+      const n = result.imported;
+      showToast(`${n} ${n === 1 ? 'entry' : 'entries'} imported`);
+    } catch {
+      showToast('Import failed');
+    }
   }
 
   function handleEdit(entry: Entry) {
@@ -130,30 +197,26 @@ export default function Page() {
     }
   }
 
-  // Global keyboard shortcuts
+  /* ── Global keyboard shortcuts ─────────────────────────── */
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
       const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 
-      // Escape: close any open overlay
       if (e.key === 'Escape') {
         if (showDrawer) { handleDrawerClose(); return; }
         if (showImport) { setShowImport(false); return; }
         if (showShortcuts) { setShowShortcuts(false); return; }
       }
 
-      // Skip other shortcuts if typing in an input
       if (inInput) return;
 
-      // ? : show shortcuts
       if (e.key === '?') {
         e.preventDefault();
         setShowShortcuts(v => !v);
         return;
       }
 
-      // N : new entry (timesheet or dashboard only)
       if (e.key === 'n' || e.key === 'N') {
         if (view === 'timesheet' || view === 'dashboard') {
           e.preventDefault();
@@ -163,7 +226,6 @@ export default function Page() {
         return;
       }
 
-      // / : focus search (timesheet only)
       if (e.key === '/') {
         if (view === 'timesheet') {
           e.preventDefault();
@@ -213,12 +275,16 @@ export default function Page() {
         setTheme={setTheme}
         trashCount={trashCount}
         currentUser={MEMBERS[0]}
-        onSignOut={() => { window.location.href = '/login'; }}
+        onSignOut={() => signOut({ callbackUrl: '/login' })}
       />
       <div className="main-area">
         <TopBar title={title} sub={sub} actions={topBarActions} />
 
-        {view === 'timesheet' ? (
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: 'var(--ink-fade)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
+            Loading…
+          </div>
+        ) : view === 'timesheet' ? (
           <Timesheet
             entries={entries}
             onTrash={handleTrash}
@@ -239,7 +305,6 @@ export default function Page() {
         ) : null}
       </div>
 
-      {/* New / Edit entry drawer */}
       {showDrawer && (
         <EntryDrawer
           entry={editEntry}
@@ -248,7 +313,6 @@ export default function Page() {
         />
       )}
 
-      {/* Import modal */}
       {showImport && (
         <ImportModal
           existingEntries={entries}
@@ -257,12 +321,10 @@ export default function Page() {
         />
       )}
 
-      {/* Keyboard shortcuts dialog */}
       {showShortcuts && (
         <ShortcutsDialog onClose={() => setShowShortcuts(false)} />
       )}
 
-      {/* Toast container */}
       {toasts.length > 0 && (
         <div className="toast-container">
           {toasts.map(t => (
