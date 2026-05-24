@@ -1,10 +1,8 @@
-import { PrismaClient, BillingType } from '@prisma/client'
-import { PrismaPg } from '@prisma/adapter-pg'
+import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import 'dotenv/config'
 
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! })
-const prisma = new PrismaClient({ adapter })
+const prisma = new PrismaClient()
 
 async function main() {
   // Admin user
@@ -34,7 +32,7 @@ async function main() {
   })
 
   // Appasamy projects
-  const appasamyProjects: { name: string; billingType: BillingType }[] = [
+  const appasamyProjects: { name: string; billingType: 'RETAINERSHIP' | 'OUT_OF_RETAINERSHIP' | 'INTERNAL' }[] = [
     { name: 'Autoref',       billingType: 'RETAINERSHIP' },
     { name: 'Perimeter',     billingType: 'RETAINERSHIP' },
     { name: 'Phaco',         billingType: 'RETAINERSHIP' },
