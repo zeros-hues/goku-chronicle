@@ -1,11 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { CLIENTS, MEMBERS, PROJECT_BY_ID, fmtDate, TODAY } from '@/lib/data';
-import type { Entry, BillingType } from '@/lib/data';
+import { fmtDate } from '@/lib/data';
+import type { Entry, BillingType, Client, Member } from '@/lib/data';
 import { IconX, IconCheck, IconCalendar, IconWarn } from './Icons';
 
-const ACTIVE_MEMBERS = MEMBERS.filter(m => m.active);
 const DRAFT_KEY = 'chronicle-draft';
 
 interface DraftState {
@@ -19,7 +18,9 @@ interface DraftState {
 }
 
 interface EntryDrawerProps {
-  entry?: Entry;        // present → edit mode
+  entry?: Entry;
+  clients: Client[];
+  members: Member[];
   onClose: () => void;
   onSave: (entry: Entry) => void;
 }
@@ -36,13 +37,21 @@ function initHoursStr(hours: Record<string, number>): Record<string, string> {
   return Object.fromEntries(Object.entries(hours).map(([k, v]) => [k, v > 0 ? String(v) : '']));
 }
 
-export default function EntryDrawer({ entry, onClose, onSave }: EntryDrawerProps) {
+export default function EntryDrawer({ entry, clients, members, onClose, onSave }: EntryDrawerProps) {
   const isEdit = !!entry;
-
-  // Restore from draft or entry
   const draft = !isEdit ? loadDraft() : null;
+  const today = fmtDate(new Date());
 
-  const [date, setDate]               = useState(() => isEdit ? entry!.date : draft?.date ?? fmtDate(TODAY));
+  // Only show active, non-archived projects in the picker
+  const activeClients = clients.map(c => ({
+    ...c,
+    projects: c.projects.filter(p => !p.archivedAt),
+  })).filter(c => c.projects.length > 0 || clients.find(x => x.id === c.id));
+
+  const allProjects = clients.flatMap(c => c.projects.map(p => ({ ...p, clientId: c.id })));
+  const projectById = Object.fromEntries(allProjects.map(p => [p.id, p]));
+
+  const [date, setDate]               = useState(() => isEdit ? entry!.date : draft?.date ?? today);
   const [type, setType]               = useState<'task' | 'meeting'>(() => isEdit ? entry!.type : draft?.type ?? 'task');
   const [projectId, setProjectId]     = useState(() => isEdit ? entry!.projectId : draft?.projectId ?? '');
   const [task, setTask]               = useState(() => isEdit ? entry!.task : draft?.task ?? '');
@@ -69,7 +78,7 @@ export default function EntryDrawer({ entry, onClose, onSave }: EntryDrawerProps
     localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
   }, [isEdit, date, type, projectId, task, hours, meetingDuration, meetingPeople]);
 
-  const selectedProj = CLIENTS.flatMap(c => c.projects).find(p => p.id === projectId);
+  const selectedProj = projectById[projectId];
   const billing: BillingType = selectedProj?.billing ?? 'retainer';
 
   function canSave() {
@@ -86,7 +95,7 @@ export default function EntryDrawer({ entry, onClose, onSave }: EntryDrawerProps
       projectId,
       type,
       task: task.trim(),
-      billing: PROJECT_BY_ID[projectId]?.billing ?? billing,
+      billing: projectById[projectId]?.billing ?? billing,
       hours: type === 'task'
         ? Object.fromEntries(
             Object.entries(hours)
@@ -114,11 +123,10 @@ export default function EntryDrawer({ entry, onClose, onSave }: EntryDrawerProps
     onSave(buildEntry());
     localStorage.removeItem(DRAFT_KEY);
     setSessionCount(n => n + 1);
-    // Reset fields but keep date & project
     setTask('');
     setHours({});
-    setMeetingDuration('');
-    setMeetingPeople('');
+    setDuration('');
+    setPeople('');
     setFlash(true);
     setTimeout(() => setFlash(false), 700);
   }
@@ -131,15 +139,10 @@ export default function EntryDrawer({ entry, onClose, onSave }: EntryDrawerProps
     onClose();
   }
 
-  function restoreDraft() {
-    setHasDraft(false);
-  }
-
   function discardDraft() {
     localStorage.removeItem(DRAFT_KEY);
     setHasDraft(false);
-    // Reset to defaults
-    setDate(fmtDate(TODAY));
+    setDate(today);
     setType('task');
     setProjectId('');
     setTask('');
@@ -153,14 +156,12 @@ export default function EntryDrawer({ entry, onClose, onSave }: EntryDrawerProps
       <div className="drawer-scrim" onClick={onClose} />
       <div className="drawer">
 
-        {/* Success flash */}
         {flash && (
           <div className="success-flash">
             <div className="ring"><IconCheck size={32} /></div>
           </div>
         )}
 
-        {/* Header */}
         <div className="drawer-header">
           <h2>{isEdit ? <>Edit <span className="i">entry</span>.</> : <>New <span className="i">entry</span>.</>}</h2>
           <button className="btn btn-ghost btn-icon" onClick={onClose}>
@@ -168,10 +169,8 @@ export default function EntryDrawer({ entry, onClose, onSave }: EntryDrawerProps
           </button>
         </div>
 
-        {/* Body */}
         <div className="drawer-body">
 
-          {/* Draft restore banner */}
           {hasDraft && !isEdit && (
             <div className="draft-banner">
               <IconWarn size={15} className="ic" />
@@ -181,7 +180,7 @@ export default function EntryDrawer({ entry, onClose, onSave }: EntryDrawerProps
                   You have an unfinished entry from a previous session.
                 </div>
                 <div className="acts">
-                  <button className="primary" onClick={restoreDraft}>Restore draft</button>
+                  <button className="primary" onClick={() => setHasDraft(false)}>Restore draft</button>
                   <button onClick={discardDraft}>Discard</button>
                 </div>
               </div>
@@ -214,23 +213,33 @@ export default function EntryDrawer({ entry, onClose, onSave }: EntryDrawerProps
           {/* Project picker */}
           <div className="form-row">
             <label className="field-label">Project</label>
-            {CLIENTS.map(client => (
-              <div key={client.id} className="proj-group">
-                <div className="proj-group-title">{client.name}</div>
-                <div className="proj-pills">
-                  {client.projects.map(proj => (
-                    <button
-                      key={proj.id}
-                      className={'proj-pill-btn' + (projectId === proj.id ? ' selected' : '')}
-                      onClick={() => setProjectId(proj.id)}
-                    >
-                      <span className="swatch" style={{ background: proj.color }} />
-                      {proj.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
+            {activeClients.length === 0 ? (
+              <p style={{ color: 'var(--ink-fade)', fontSize: 13, margin: '8px 0' }}>
+                No projects yet — add them in Settings → Clients &amp; Projects.
+              </p>
+            ) : (
+              activeClients.map(client => {
+                const visibleProjects = client.projects.filter(p => !p.archivedAt);
+                if (visibleProjects.length === 0) return null;
+                return (
+                  <div key={client.id} className="proj-group">
+                    <div className="proj-group-title">{client.name}</div>
+                    <div className="proj-pills">
+                      {visibleProjects.map(proj => (
+                        <button
+                          key={proj.id}
+                          className={'proj-pill-btn' + (projectId === proj.id ? ' selected' : '')}
+                          onClick={() => setProjectId(proj.id)}
+                        >
+                          <span className="swatch" style={{ background: proj.color }} />
+                          {proj.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
 
           {/* Description */}
@@ -250,27 +259,31 @@ export default function EntryDrawer({ entry, onClose, onSave }: EntryDrawerProps
           {type === 'task' && (
             <div className="form-row">
               <label className="field-label">Hours per member</label>
-              {ACTIVE_MEMBERS.map(m => {
-                const val = hours[m.id] ?? '';
-                const hasVal = parseFloat(val) > 0;
-                return (
-                  <div key={m.id} className="member-row">
-                    <span className="av" style={{ background: m.color }}>{m.init.slice(0, 1)}</span>
-                    <span className="name">
-                      {m.name}
-                      <span className="init">{m.init}</span>
-                    </span>
-                    <div className={'hours-input' + (hasVal ? ' has-value' : '')}>
-                      <input
-                        type="number" min="0" max="24" step="0.5"
-                        value={val} placeholder="0"
-                        onChange={e => setHours(prev => ({ ...prev, [m.id]: e.target.value }))}
-                      />
-                      <span className="u">h</span>
+              {members.length === 0 ? (
+                <p style={{ color: 'var(--ink-fade)', fontSize: 13 }}>No team members — add them in Settings → Team Members.</p>
+              ) : (
+                members.map(m => {
+                  const val = hours[m.id] ?? '';
+                  const hasVal = parseFloat(val) > 0;
+                  return (
+                    <div key={m.id} className="member-row">
+                      <span className="av" style={{ background: m.color }}>{m.init.slice(0, 1)}</span>
+                      <span className="name">
+                        {m.name}
+                        <span className="init">{m.init}</span>
+                      </span>
+                      <div className={'hours-input' + (hasVal ? ' has-value' : '')}>
+                        <input
+                          type="number" min="0" max="24" step="0.5"
+                          value={val} placeholder="0"
+                          onChange={e => setHours(prev => ({ ...prev, [m.id]: e.target.value }))}
+                        />
+                        <span className="u">h</span>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           )}
 

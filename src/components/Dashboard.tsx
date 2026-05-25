@@ -1,12 +1,9 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { PROJECT_BY_ID, MEMBERS, HOLIDAYS, entryHours, isWeekend, fmtDate, TODAY, monShort, dowShort, pad } from '@/lib/data';
-import type { Entry } from '@/lib/data';
+import { entryHours, isWeekend, fmtDate, monShort, dowShort, pad } from '@/lib/data';
+import type { Entry, Member, Project } from '@/lib/data';
 import { IconPrint } from './Icons';
-
-const ACTIVE_MEMBERS = MEMBERS.filter(m => m.active);
-const DAILY_TARGET = 8;
 
 type RangeId = 'today' | 'this-week' | 'this-month' | 'last-month' | 'this-year';
 
@@ -17,6 +14,8 @@ const RANGES: { id: RangeId; label: string }[] = [
   { id: 'last-month', label: 'Last month' },
   { id: 'this-year',  label: 'This year'  },
 ];
+
+type ProjectWithMeta = Project & { clientId: string; clientName: string };
 
 function useCountUp(target: number, dur = 1100) {
   const [n, setN] = useState(0);
@@ -71,13 +70,21 @@ function BarRow({ label, value, max, color }: {
   );
 }
 
-interface DashboardProps { entries: Entry[]; }
+interface DashboardProps {
+  entries: Entry[];
+  members: Member[];
+  projectById: Record<string, ProjectWithMeta>;
+  holidays: Record<string, string>;
+  hoursTarget: number;
+}
 
-export default function Dashboard({ entries }: DashboardProps) {
+export default function Dashboard({ entries, members, projectById, holidays, hoursTarget }: DashboardProps) {
+  const today = useMemo(() => new Date(), []);
+  const DAILY_TARGET = hoursTarget;
   const [range, setRange] = useState<RangeId>('this-month');
 
   const [rangeStart, rangeEnd] = useMemo(() => {
-    const t = new Date(TODAY);
+    const t = new Date(today);
     if (range === 'today') return [
       new Date(t.getFullYear(), t.getMonth(), t.getDate()),
       new Date(t.getFullYear(), t.getMonth(), t.getDate()),
@@ -90,7 +97,7 @@ export default function Dashboard({ entries }: DashboardProps) {
     if (range === 'this-month') return [new Date(t.getFullYear(), t.getMonth(), 1), new Date(t.getFullYear(), t.getMonth() + 1, 0)];
     if (range === 'last-month') return [new Date(t.getFullYear(), t.getMonth() - 1, 1), new Date(t.getFullYear(), t.getMonth(), 0)];
     return [new Date(t.getFullYear(), 0, 1), new Date(t.getFullYear(), 11, 31)];
-  }, [range]);
+  }, [range, today]);
 
   const filtered = useMemo(() => entries.filter(e => {
     if (e.trashed) return false;
@@ -110,7 +117,7 @@ export default function Dashboard({ entries }: DashboardProps) {
   const byProject: Record<string, number> = {};
   filtered.forEach(e => { byProject[e.projectId] = (byProject[e.projectId] ?? 0) + entryHours(e); });
   const projectRows = Object.entries(byProject)
-    .map(([pid, hrs]) => ({ project: PROJECT_BY_ID[pid], hours: hrs }))
+    .map(([pid, hrs]) => ({ project: projectById[pid], hours: hrs }))
     .filter(r => r.project)
     .sort((a, b) => b.hours - a.hours)
     .slice(0, 8);
@@ -121,7 +128,7 @@ export default function Dashboard({ entries }: DashboardProps) {
   filtered.forEach(e => {
     if (e.type === 'task') Object.entries(e.hours).forEach(([mid, h]) => { byMember[mid] = (byMember[mid] ?? 0) + h; });
   });
-  const memberRows = ACTIVE_MEMBERS.map(m => ({ member: m, hours: byMember[m.id] ?? 0 })).sort((a, b) => b.hours - a.hours);
+  const memberRows = members.map(m => ({ member: m, hours: byMember[m.id] ?? 0 })).sort((a, b) => b.hours - a.hours);
   const maxMem = Math.max(1, ...memberRows.map(r => r.hours));
 
   // Daily stacked chart
@@ -149,17 +156,17 @@ export default function Dashboard({ entries }: DashboardProps) {
   // Goal + below-target
   const workingDays = dayEntries.filter(([d]) => {
     const dt = new Date(d + 'T00:00:00');
-    return !isWeekend(dt) && !HOLIDAYS[d] && dt <= TODAY;
+    return !isWeekend(dt) && !holidays[d] && dt <= today;
   });
   const studioAvg = workingDays.length > 0
-    ? workingDays.reduce((s, [, v]) => s + v.total, 0) / workingDays.length / Math.max(1, ACTIVE_MEMBERS.length)
+    ? workingDays.reduce((s, [, v]) => s + v.total, 0) / workingDays.length / Math.max(1, members.length)
     : 0;
   const belowTarget = workingDays
-    .filter(([, v]) => v.total / Math.max(1, ACTIVE_MEMBERS.length) < DAILY_TARGET * 0.8)
+    .filter(([, v]) => v.total / Math.max(1, members.length) < DAILY_TARGET * 0.8)
     .map(([d]) => d).slice(0, 8);
 
   // Overtime
-  const overtime = ACTIVE_MEMBERS.map(m => {
+  const overtime = members.map(m => {
     const days: { date: string; hours: number }[] = [];
     Object.entries(dayMap).forEach(([d, v]) => {
       const h = v.members[m.id] ?? 0;
@@ -174,7 +181,7 @@ export default function Dashboard({ entries }: DashboardProps) {
   );
   const noEntryDays = dayEntries.filter(([d, v]) => {
     const dt = new Date(d + 'T00:00:00');
-    return !isWeekend(dt) && !HOLIDAYS[d] && v.total === 0 && dt <= TODAY;
+    return !isWeekend(dt) && !holidays[d] && v.total === 0 && dt <= today;
   }).length;
   const avgDaily = workingDays.length > 0
     ? workingDays.reduce((s, [, v]) => s + v.total, 0) / workingDays.length
@@ -201,9 +208,6 @@ export default function Dashboard({ entries }: DashboardProps) {
           </svg>
           <h3>No data for this period</h3>
           <p>Log some entries in the Timesheet to see your studio analytics here.</p>
-          <button className="btn btn-accent" onClick={() => {}}>
-            Log hours
-          </button>
         </div>
       </div>
     );
@@ -245,7 +249,7 @@ export default function Dashboard({ entries }: DashboardProps) {
           label="Active members"
           value={activeMemberSet.size}
           suffix=""
-          delta={`of ${ACTIVE_MEMBERS.length} on the team`}
+          delta={`of ${members.length} on the team`}
         />
       </div>
 
@@ -270,7 +274,7 @@ export default function Dashboard({ entries }: DashboardProps) {
                         <span className="rank-swatch" style={{ background: r.project.color }} />
                         <div className="rank-info">
                           <span className="rank-name">{r.project.name}</span>
-                          {r.project.clientId !== 'goku' && <span className="rank-client">{r.project.clientName}</span>}
+                          <span className="rank-client">{r.project.clientName}</span>
                         </div>
                         <span className="rank-pct">{pct.toFixed(0)}<span className="u">%</span></span>
                         <span className="rank-hrs">{r.hours.toFixed(1)}<span className="u">h</span></span>
@@ -289,9 +293,9 @@ export default function Dashboard({ entries }: DashboardProps) {
           </div>
           {(() => {
             const segs = [
-              { id: 'retainer', label: 'Retainership',    hours: retainerHours, color: 'oklch(0.66 0.09 145)', note: 'Appasamy · in-scope' },
-              { id: 'out',      label: 'Out of retainer', hours: outHours,      color: 'oklch(0.70 0.11 35)',  note: 'Appasamy · over the line' },
-              { id: 'internal', label: 'Internal',        hours: internalHours, color: 'oklch(0.55 0.07 280)', note: 'Goku Studio · own work' },
+              { id: 'retainer', label: 'Retainership',    hours: retainerHours, color: 'oklch(0.66 0.09 145)', note: 'In-scope retainer work' },
+              { id: 'out',      label: 'Out of retainer', hours: outHours,      color: 'oklch(0.70 0.11 35)',  note: 'Over the retainer line' },
+              { id: 'internal', label: 'Internal',        hours: internalHours, color: 'oklch(0.55 0.07 280)', note: 'Own studio work' },
             ];
             return (
               <>
@@ -333,11 +337,11 @@ export default function Dashboard({ entries }: DashboardProps) {
           {dayEntries.map(([d, v]) => {
             const dt = new Date(d + 'T00:00:00');
             const isWE = isWeekend(dt);
-            const isHol = !!HOLIDAYS[d];
+            const isHol = !!holidays[d];
             return (
-              <div key={d} className={['col', isWE ? 'weekend' : '', isHol ? 'holiday' : ''].filter(Boolean).join(' ')} title={`${d} · ${v.total.toFixed(1)}h${isHol ? ' · ' + HOLIDAYS[d] : ''}`}>
+              <div key={d} className={['col', isWE ? 'weekend' : '', isHol ? 'holiday' : ''].filter(Boolean).join(' ')} title={`${d} · ${v.total.toFixed(1)}h${isHol ? ' · ' + holidays[d] : ''}`}>
                 {Object.entries(v.members).map(([mid, h]) => {
-                  const mem = MEMBERS.find(x => x.id === mid);
+                  const mem = members.find(x => x.id === mid);
                   const color = mid === '__meet' ? 'var(--ink-ghost)' : mem ? mem.color : 'var(--ink-ghost)';
                   return <div key={mid} className="seg" style={{ height: (h / maxDay) * 200, background: color }} />;
                 })}

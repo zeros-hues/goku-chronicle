@@ -1,7 +1,7 @@
-import { MEMBERS, ALL_PROJECTS } from '@/lib/data'
-import type { Entry, BillingType } from '@/lib/data'
+import { getColorFromSeed } from '@/lib/data'
+import type { Entry, Client, Member, BillingType, Project } from '@/lib/data'
 
-/* ── Static lookup tables built from frontend data.ts ───────── */
+/* ── Billing enum conversion ─────────────────────────────────── */
 
 const billingToFrontend: Record<string, BillingType> = {
   RETAINERSHIP: 'retainer',
@@ -15,59 +15,7 @@ const billingToBackend: Record<string, string> = {
   internal: 'INTERNAL',
 }
 
-// initials.toLowerCase() → frontend member id ('G' → 'g', 'Pd' → 'pd')
-const initToMemberId: Record<string, string> = {}
-for (const m of MEMBERS) initToMemberId[m.init.toLowerCase()] = m.id
-
-// frontend member id → initials ('g' → 'G')
-const memberIdToInit: Record<string, string> = {}
-for (const m of MEMBERS) memberIdToInit[m.id] = m.init
-
-// project name.toLowerCase() → frontend project id ('autoref' → 'autoref', '3d microscope' → '3dmicro')
-const nameToProjectId: Record<string, string> = {}
-for (const p of ALL_PROJECTS) nameToProjectId[p.name.toLowerCase()] = p.id
-
-// frontend project id → project name ('autoref' → 'Autoref')
-const projectIdToName: Record<string, string> = {}
-for (const p of ALL_PROJECTS) projectIdToName[p.id] = p.name
-
-// frontend project id → client name ('autoref' → 'Appasamy')
-const projectIdToClient: Record<string, string> = {}
-for (const p of ALL_PROJECTS) projectIdToClient[p.id] = (p as { clientName: string }).clientName
-
-/* ── Dynamic lookup tables fetched from API on first use ────── */
-
-const memberInitToBackendId: Record<string, string> = {} // initials.lower → backend cuid
-const projectNameToBackendId: Record<string, string> = {} // name.lower → backend cuid
-let mapsLoaded = false
-
-async function ensureMaps() {
-  if (mapsLoaded) return
-  try {
-    const [teamRes, clientsRes] = await Promise.all([
-      fetch('/api/settings/team'),
-      fetch('/api/settings/clients'),
-    ])
-    if (!teamRes.ok || !clientsRes.ok) return
-
-    const members = await teamRes.json() as { id: string; initials: string }[]
-    const clients = await clientsRes.json() as { projects: { id: string; name: string }[] }[]
-
-    for (const m of members) {
-      memberInitToBackendId[m.initials.toLowerCase()] = m.id
-    }
-    for (const c of clients) {
-      for (const p of c.projects) {
-        projectNameToBackendId[p.name.toLowerCase()] = p.id
-      }
-    }
-    mapsLoaded = true
-  } catch {
-    // Maps unavailable — API calls will gracefully degrade
-  }
-}
-
-/* ── Sequential number ID ↔ backend cuid mapping ────────────── */
+/* ── Sequential number ID ↔ backend cuid mapping ───────────── */
 
 let idSeq = 1_000_000
 const cuidToNum = new Map<string, number>()
@@ -85,12 +33,12 @@ function getBackendId(frontendId: number): string | undefined {
   return numToCuid.get(frontendId)
 }
 
-/* ── Backend response shape ─────────────────────────────────── */
+/* ── Backend response shapes ─────────────────────────────────── */
 
 interface BackendTaskHour {
   teamMemberId: string
   hours: number
-  teamMember: { initials: string }
+  teamMember: { id: string; initials: string }
 }
 
 interface BackendEntry {
@@ -108,31 +56,92 @@ interface BackendEntry {
     id: string
     name: string
     billingType: string
-    client: { name: string }
+    client: { id: string; name: string }
   } | null
   taskHours: BackendTaskHour[]
 }
 
-/* ── Backend → Frontend transformation ─────────────────────── */
+interface BackendProject {
+  id: string
+  name: string
+  clientId: string
+  billingType: string
+  archivedAt: string | null
+  client?: { id: string; name: string; hasRetainership: boolean }
+}
+
+interface BackendClient {
+  id: string
+  name: string
+  hasRetainership: boolean
+  projects: BackendProject[]
+}
+
+interface BackendMember {
+  id: string
+  name: string
+  initials: string
+  whatsappNumber: string | null
+  isActive: boolean
+}
+
+interface BackendHoliday {
+  id: string
+  date: string
+  label: string | null
+}
+
+/* ── Conversion helpers ──────────────────────────────────────── */
+
+function backendProjectToBilling(billingType: string): BillingType {
+  return billingToFrontend[billingType] ?? 'internal'
+}
+
+export function toFrontendProject(p: BackendProject): Project {
+  return {
+    id: p.id,
+    name: p.name,
+    color: getColorFromSeed(p.id),
+    billing: backendProjectToBilling(p.billingType),
+    archivedAt: p.archivedAt ?? null,
+  }
+}
+
+export function toFrontendClient(c: BackendClient): Client {
+  return {
+    id: c.id,
+    name: c.name,
+    type: c.hasRetainership ? 'client' : 'internal',
+    hasRetainership: c.hasRetainership,
+    projects: c.projects.map(toFrontendProject),
+  }
+}
+
+export function toFrontendMember(m: BackendMember, index: number): Member {
+  return {
+    id: m.id,
+    name: m.name,
+    init: m.initials,
+    avatarClass: `av-${index % 8}`,
+    color: getColorFromSeed(m.id),
+    active: m.isActive,
+    wa: m.whatsappNumber ?? '',
+  }
+}
 
 function toFrontendEntry(b: BackendEntry): Entry {
-  const frontendProjectId = b.project
-    ? (nameToProjectId[b.project.name.toLowerCase()] ?? b.project.id)
-    : ''
-
   const billingKey = (b.billingOverride ?? b.project?.billingType ?? 'INTERNAL') as string
   const billing = (billingToFrontend[billingKey] ?? 'internal') as BillingType
 
   const hours: Record<string, number> = {}
   for (const th of b.taskHours) {
-    const memberId = initToMemberId[th.teamMember.initials.toLowerCase()]
-    if (memberId) hours[memberId] = th.hours
+    hours[th.teamMemberId] = th.hours
   }
 
   return {
     id: assignId(b.id),
     date: b.date.slice(0, 10),
-    projectId: frontendProjectId,
+    projectId: b.projectId ?? '',
     type: b.isMeeting ? 'meeting' : 'task',
     task: b.taskDescription,
     billing,
@@ -144,28 +153,14 @@ function toFrontendEntry(b: BackendEntry): Entry {
   }
 }
 
-/* ── Frontend → Backend payload ─────────────────────────────── */
-
-async function toBackendPayload(e: Entry) {
-  await ensureMaps()
-
-  const projectName = projectIdToName[e.projectId]
-  const backendProjectId = projectName
-    ? (projectNameToBackendId[projectName.toLowerCase()] ?? null)
-    : null
-
+function toBackendPayload(e: Entry) {
   const hours = Object.entries(e.hours)
     .filter(([, h]) => h > 0)
-    .map(([memberId, h]) => {
-      const init = memberIdToInit[memberId]?.toLowerCase()
-      const backendMemberId = init ? memberInitToBackendId[init] : undefined
-      return backendMemberId ? { teamMemberId: backendMemberId, hours: h } : null
-    })
-    .filter((x): x is { teamMemberId: string; hours: number } => x !== null)
+    .map(([teamMemberId, h]) => ({ teamMemberId, hours: h }))
 
   return {
     date: e.date,
-    projectId: backendProjectId,
+    projectId: e.projectId || null,
     taskDescription: e.task,
     isMeeting: e.type === 'meeting',
     personCount: e.meetingPeople ?? null,
@@ -175,10 +170,9 @@ async function toBackendPayload(e: Entry) {
   }
 }
 
-/* ── Public API functions ───────────────────────────────────── */
+/* ── Timesheet entry functions ──────────────────────────────── */
 
 export async function fetchEntries(): Promise<Entry[]> {
-  await ensureMaps()
   const res = await fetch('/api/timesheet')
   if (!res.ok) throw new Error('Failed to fetch entries')
   const { entries } = await res.json() as { entries: BackendEntry[] }
@@ -186,7 +180,6 @@ export async function fetchEntries(): Promise<Entry[]> {
 }
 
 export async function fetchTrash(): Promise<Entry[]> {
-  await ensureMaps()
   const res = await fetch('/api/trash')
   if (!res.ok) throw new Error('Failed to fetch trash')
   const entries = await res.json() as BackendEntry[]
@@ -194,7 +187,7 @@ export async function fetchTrash(): Promise<Entry[]> {
 }
 
 export async function createEntry(e: Entry): Promise<Entry> {
-  const payload = await toBackendPayload(e)
+  const payload = toBackendPayload(e)
   const res = await fetch('/api/timesheet', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -207,7 +200,7 @@ export async function createEntry(e: Entry): Promise<Entry> {
 export async function updateEntry(e: Entry): Promise<Entry> {
   const backendId = getBackendId(e.id)
   if (!backendId) throw new Error('Cannot update: backend ID not found')
-  const payload = await toBackendPayload(e)
+  const payload = toBackendPayload(e)
   const res = await fetch(`/api/timesheet/${backendId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -248,25 +241,28 @@ export async function permanentDeleteEntries(ids: number[]): Promise<void> {
 }
 
 export async function importEntries(
-  entries: Entry[]
+  entries: Entry[],
+  memberById: Record<string, Member>,
+  projectById: Record<string, Project & { clientId: string; clientName: string }>,
 ): Promise<{ imported: number; skipped: number; errors: string[] }> {
-  await ensureMaps()
-
-  const parsedEntries = entries.map(e => ({
-    date: e.date,
-    projectName: projectIdToName[e.projectId] ?? e.projectId,
-    clientName: projectIdToClient[e.projectId] ?? '',
-    taskDescription: e.task,
-    isMeeting: e.type === 'meeting',
-    personCount: e.meetingPeople,
-    meetingDuration: e.meetingDuration,
-    hours: Object.entries(e.hours)
-      .filter(([, h]) => h > 0)
-      .map(([memberId, h]) => ({
-        memberInitials: memberIdToInit[memberId] ?? memberId,
-        hours: h,
-      })),
-  }))
+  const parsedEntries = entries.map(e => {
+    const proj = projectById[e.projectId]
+    return {
+      date: e.date,
+      projectName: proj?.name ?? e.projectId,
+      clientName: proj?.clientName ?? '',
+      taskDescription: e.task,
+      isMeeting: e.type === 'meeting',
+      personCount: e.meetingPeople,
+      meetingDuration: e.meetingDuration,
+      hours: Object.entries(e.hours)
+        .filter(([, h]) => h > 0)
+        .map(([memberId, h]) => ({
+          memberInitials: memberById[memberId]?.init ?? memberId,
+          hours: h,
+        })),
+    }
+  })
 
   const res = await fetch('/api/import', {
     method: 'POST',
@@ -275,6 +271,168 @@ export async function importEntries(
   })
   if (!res.ok) throw new Error('Import failed')
   return res.json() as Promise<{ imported: number; skipped: number; errors: string[] }>
+}
+
+/* ── Settings — clients ─────────────────────────────────────── */
+
+export async function fetchClients(): Promise<Client[]> {
+  const res = await fetch('/api/settings/clients')
+  if (!res.ok) throw new Error('Failed to fetch clients')
+  const data = await res.json() as BackendClient[]
+  return data.map(toFrontendClient)
+}
+
+export async function createClient(name: string, hasRetainership: boolean): Promise<Client> {
+  const res = await fetch('/api/settings/clients', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, hasRetainership }),
+  })
+  if (!res.ok) {
+    const { error } = await res.json() as { error: string }
+    throw new Error(error ?? 'Failed to create client')
+  }
+  return toFrontendClient(await res.json() as BackendClient)
+}
+
+export async function updateClient(id: string, name: string, hasRetainership: boolean): Promise<Client> {
+  const res = await fetch(`/api/settings/clients/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, hasRetainership }),
+  })
+  if (!res.ok) throw new Error('Failed to update client')
+  return toFrontendClient(await res.json() as BackendClient)
+}
+
+/* ── Settings — projects ────────────────────────────────────── */
+
+export async function createProject(clientId: string, name: string, billing: BillingType): Promise<Project> {
+  const res = await fetch('/api/settings/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, clientId, billingType: billingToBackend[billing] }),
+  })
+  if (!res.ok) {
+    const { error } = await res.json() as { error: string }
+    throw new Error(error ?? 'Failed to create project')
+  }
+  return toFrontendProject(await res.json() as BackendProject)
+}
+
+export async function updateProject(id: string, name: string, billing: BillingType): Promise<Project> {
+  const res = await fetch(`/api/settings/projects/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, billingType: billingToBackend[billing] }),
+  })
+  if (!res.ok) throw new Error('Failed to update project')
+  return toFrontendProject(await res.json() as BackendProject)
+}
+
+export async function archiveProject(id: string): Promise<Project> {
+  const res = await fetch(`/api/settings/projects/${id}/archive`, {
+    method: 'PATCH',
+  })
+  if (!res.ok) throw new Error('Failed to archive project')
+  return toFrontendProject(await res.json() as BackendProject)
+}
+
+/* ── Settings — team members ────────────────────────────────── */
+
+export async function fetchMembers(): Promise<Member[]> {
+  const res = await fetch('/api/settings/team')
+  if (!res.ok) throw new Error('Failed to fetch team members')
+  const data = await res.json() as BackendMember[]
+  return data.map(toFrontendMember)
+}
+
+export async function createMember(name: string, initials: string, whatsappNumber?: string): Promise<Member> {
+  const allMembers = await fetchMembers()
+  const res = await fetch('/api/settings/team', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, initials, whatsappNumber: whatsappNumber || null }),
+  })
+  if (!res.ok) {
+    const { error } = await res.json() as { error: string }
+    throw new Error(error ?? 'Failed to create member')
+  }
+  return toFrontendMember(await res.json() as BackendMember, allMembers.length)
+}
+
+export async function updateMember(id: string, data: { name?: string; whatsappNumber?: string; isActive?: boolean }, index: number): Promise<Member> {
+  const res = await fetch(`/api/settings/team/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error('Failed to update member')
+  return toFrontendMember(await res.json() as BackendMember, index)
+}
+
+export async function deactivateMember(id: string, isActive: boolean, index: number): Promise<Member> {
+  const res = await fetch(`/api/settings/team/${id}/deactivate`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ isActive }),
+  })
+  if (!res.ok) throw new Error('Failed to update member')
+  return toFrontendMember(await res.json() as BackendMember, index)
+}
+
+/* ── Settings — account ─────────────────────────────────────── */
+
+export interface AccountSettings {
+  hoursTarget: number
+  overtimeThreshold: number
+  reminderEnabled: boolean
+  reminderTime: string
+  holidays: BackendHoliday[]
+}
+
+export async function fetchAccount(): Promise<AccountSettings> {
+  const res = await fetch('/api/settings/account')
+  if (!res.ok) throw new Error('Failed to fetch account settings')
+  return res.json() as Promise<AccountSettings>
+}
+
+export async function updateAccount(data: { hoursTarget?: number; overtimeThreshold?: number }): Promise<void> {
+  const res = await fetch('/api/settings/account', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error('Failed to update account settings')
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  const res = await fetch('/api/settings/account/password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  })
+  if (!res.ok) {
+    const { error } = await res.json() as { error: string }
+    throw new Error(error ?? 'Failed to change password')
+  }
+}
+
+export async function addHoliday(date: string, label: string): Promise<BackendHoliday> {
+  const res = await fetch('/api/settings/holidays', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date, label }),
+  })
+  if (!res.ok) throw new Error('Failed to add holiday')
+  return res.json() as Promise<BackendHoliday>
+}
+
+export async function removeHoliday(id: string): Promise<void> {
+  const res = await fetch(`/api/settings/holidays/${id}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error('Failed to remove holiday')
 }
 
 export { billingToBackend, billingToFrontend }

@@ -1,19 +1,11 @@
 'use client';
 
-import { useState, useRef } from 'react';
-import {
-  ALL_PROJECTS,
-  PROJECT_BY_ID,
-  MEMBERS,
-  type Entry,
-  type BillingType,
-} from '@/lib/data';
+import { useState, useRef, useMemo } from 'react';
+import type { Entry, Client, Member, BillingType, Project } from '@/lib/data';
 import ProjectPill from './ProjectPill';
 import { IconX, IconCheck, IconWarn } from './Icons';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// External JSON format (our generated import file)
-// ─────────────────────────────────────────────────────────────────────────────
+/* ── External JSON format ────────────────────────────────────── */
 
 interface ExternalHour {
   member: string;
@@ -42,76 +34,23 @@ function isExternal(e: AnyEntry): e is ExternalEntry {
   return !('projectId' in e) && ('project' in e || 'isMeeting' in e);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Conversion helpers
-// ─────────────────────────────────────────────────────────────────────────────
+/* ── Conversion helpers ─────────────────────────────────────── */
 
-// Map external billingType string → internal BillingType
 function toBilling(s: string | undefined): BillingType {
   if (!s) return 'retainer';
   const map: Record<string, BillingType> = {
-    RETAINERSHIP:         'retainer',
-    OUT_OF_RETAINERSHIP:  'out',
-    INTERNAL:             'internal',
-    retainer:             'retainer',
-    out:                  'out',
-    internal:             'internal',
+    RETAINERSHIP: 'retainer',
+    OUT_OF_RETAINERSHIP: 'out',
+    INTERNAL: 'internal',
+    retainer: 'retainer',
+    out: 'out',
+    internal: 'internal',
   };
   return map[s] ?? 'retainer';
 }
 
-// Map external initials → member id (case-insensitive)
-// e.g. "G" → "g",  "DK" → "dk",  "Sid" → "sid"
-function initialsToMemberId(initials: string): string | null {
-  const match = MEMBERS.find(
-    m => m.init.toLowerCase() === initials.toLowerCase()
-  );
-  return match ? match.id : null;
-}
+type ProjectWithMeta = Project & { clientId: string; clientName: string };
 
-// Convert ExternalEntry → internal Entry
-// Returns null if project cannot be resolved
-function convertExternal(e: ExternalEntry, nextId: number): Entry | null {
-  const projectName = (e.projectName || e.project || '').trim();
-  const clientName  = (e.clientName  || e.client  || '').trim();
-  const task        = (e.taskDescription || e.task || 'Untitled').trim();
-
-  // Find project by name + client (case-insensitive)
-  const proj = ALL_PROJECTS.find(
-    p =>
-      p.name.toLowerCase() === projectName.toLowerCase() &&
-      p.clientName.toLowerCase() === clientName.toLowerCase()
-  );
-
-  if (!proj) return null; // unknown project
-
-  // Convert hours array → Record<memberId, hours>
-  const hours: Record<string, number> = {};
-  if (!e.isMeeting && e.hours) {
-    for (const h of e.hours) {
-      const id = initialsToMemberId(h.initials || h.member);
-      if (id && Number(h.hours) > 0) {
-        hours[id] = Number(h.hours);
-      }
-    }
-  }
-
-  return {
-    id:              nextId,
-    date:            e.date,
-    projectId:       proj.id,
-    type:            e.isMeeting ? 'meeting' : 'task',
-    task,
-    billing:         toBilling(e.billingType ?? proj.billing),
-    hours,
-    meetingDuration: e.isMeeting ? (e.meetingDuration ?? 1) : undefined,
-    meetingPeople:   e.isMeeting ? (e.personCount ?? 2) : undefined,
-    createdAt:       Date.now(),
-    trashed:         false,
-  };
-}
-
-// Calculate display hours for a row
 function calcDisplayHours(e: AnyEntry): number {
   if (isExternal(e)) {
     if (e.isMeeting) return e.meetingDuration ?? 1;
@@ -127,16 +66,14 @@ function isDuplicate(e: Entry, existing: Entry[]): boolean {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
+/* ── Types ───────────────────────────────────────────────────── */
 
 type ImportStatus = 'idle' | 'parsing' | 'preview' | 'importing' | 'done' | 'error';
 type EntryStatus  = 'new' | 'duplicate' | 'unknown';
 
 interface PreviewRow {
   raw:          AnyEntry;
-  converted:    Entry | null;   // null = unknown project
+  converted:    Entry | null;
   status:       EntryStatus;
   projectLabel: string;
   clientLabel:  string;
@@ -144,17 +81,15 @@ interface PreviewRow {
   displayHours: number;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Component
-// ─────────────────────────────────────────────────────────────────────────────
-
 interface ImportModalProps {
   existingEntries: Entry[];
+  clients: Client[];
+  members: Member[];
   onImport: (entries: Entry[]) => void;
   onClose: () => void;
 }
 
-export default function ImportModal({ existingEntries, onImport, onClose }: ImportModalProps) {
+export default function ImportModal({ existingEntries, clients, members, onImport, onClose }: ImportModalProps) {
   const [status,    setStatus]   = useState<ImportStatus>('idle');
   const [isDragOver, setDrag]    = useState(false);
   const [rows,      setRows]     = useState<PreviewRow[]>([]);
@@ -163,7 +98,56 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
   const [apiErrors, setApiErrors] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // ── Parse file ────────────────────────────────────────────────────────────
+  // Build lookup maps from fetched data
+  const { allProjects, projectById, initToMemberId } = useMemo(() => {
+    const allProjects = clients.flatMap(c => c.projects.map(p => ({ ...p, clientId: c.id, clientName: c.name })));
+    const projectById = Object.fromEntries(allProjects.map(p => [p.id, p]));
+    const initToMemberId: Record<string, string> = {};
+    for (const m of members) initToMemberId[m.init.toLowerCase()] = m.id;
+    return { allProjects, projectById, initToMemberId };
+  }, [clients, members]);
+
+  function resolveProject(projectName: string, clientName: string): ProjectWithMeta | undefined {
+    return allProjects.find(
+      p =>
+        p.name.toLowerCase() === projectName.toLowerCase() &&
+        p.clientName.toLowerCase() === clientName.toLowerCase()
+    ) ?? allProjects.find(p => p.name.toLowerCase() === projectName.toLowerCase());
+  }
+
+  function convertExternal(e: ExternalEntry, nextId: number): Entry | null {
+    const projectName = (e.projectName || e.project || '').trim();
+    const clientName  = (e.clientName  || e.client  || '').trim();
+    const task        = (e.taskDescription || e.task || 'Untitled').trim();
+
+    const proj = resolveProject(projectName, clientName);
+    if (!proj) return null;
+
+    const hours: Record<string, number> = {};
+    if (!e.isMeeting && e.hours) {
+      for (const h of e.hours) {
+        const initials = (h.initials || h.member || '').trim();
+        const id = initToMemberId[initials.toLowerCase()];
+        if (id && Number(h.hours) > 0) hours[id] = Number(h.hours);
+      }
+    }
+
+    return {
+      id:              nextId,
+      date:            e.date,
+      projectId:       proj.id,
+      type:            e.isMeeting ? 'meeting' : 'task',
+      task,
+      billing:         toBilling(e.billingType ?? proj.billing),
+      hours,
+      meetingDuration: e.isMeeting ? (e.meetingDuration ?? 1) : undefined,
+      meetingPeople:   e.isMeeting ? (e.personCount ?? 2) : undefined,
+      createdAt:       Date.now(),
+      trashed:         false,
+    };
+  }
+
+  /* ── Parse file ─────────────────────────────────────────── */
 
   function handleFile(file: File) {
     setStatus('parsing');
@@ -195,30 +179,28 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
               return {
                 raw, converted: null,
                 status: 'unknown' as EntryStatus,
-                projectLabel: projectName,
+                projectLabel: projectName || 'Unknown Project',
                 clientLabel:  clientName,
                 taskLabel:    task,
                 displayHours: calcDisplayHours(raw),
               };
             }
 
-            const status: EntryStatus = isDuplicate(converted, existingEntries)
-              ? 'duplicate'
-              : 'new';
+            const status: EntryStatus = isDuplicate(converted, existingEntries) ? 'duplicate' : 'new';
 
             return {
               raw, converted,
               status,
-              projectLabel: PROJECT_BY_ID[converted.projectId]?.name ?? projectName,
+              projectLabel: projectById[converted.projectId]?.name ?? projectName,
               clientLabel:  clientName,
               taskLabel:    task,
               displayHours: calcDisplayHours(raw),
             };
           }
 
-          // Format A — internal entry
+          // Internal entry format
           const ie = raw as Entry;
-          const proj = PROJECT_BY_ID[ie.projectId];
+          const proj = projectById[ie.projectId];
           const status: EntryStatus = isDuplicate(ie, existingEntries) ? 'duplicate' : 'new';
 
           return {
@@ -231,7 +213,6 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
           };
         });
 
-        // Pre-select all "new" rows
         const newIdxs = new Set(
           preview.map((_, i) => i).filter(i => preview[i].status === 'new')
         );
@@ -254,19 +235,16 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
   }
 
   function toggleRow(i: number) {
-  if (rows[i].status === 'unknown') return;
-  setSelected(prev => {
-    const n = new Set(prev);
-    if (n.has(i)) {
-      n.delete(i);
-    } else {
-      n.add(i);
-    }
-    return n;
-  });
-}
+    if (rows[i].status === 'unknown') return;
+    setSelected(prev => {
+      const n = new Set(prev);
+      if (n.has(i)) n.delete(i);
+      else n.add(i);
+      return n;
+    });
+  }
 
-  // ── Confirm ───────────────────────────────────────────────────────────────
+  /* ── Confirm ─────────────────────────────────────────────── */
 
   async function handleConfirm() {
     setStatus('importing');
@@ -275,11 +253,8 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
       .map(i => rows[i].converted)
       .filter((e): e is Entry => e !== null);
 
-    // Update local state immediately
     onImport(toImport);
 
-    // Also persist to database via API
-    // Build external entries to send to /api/import
     const externalRows = Array.from(selected)
       .map(i => rows[i])
       .filter(r => isExternal(r.raw) && r.converted !== null)
@@ -295,22 +270,21 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
         const data = await res.json() as { imported: number; skipped: number; errors: string[] };
         if (data.errors?.length) setApiErrors(data.errors);
       } catch {
-        // API failed but local state is already updated — non-fatal
-        setApiErrors(['Could not save to database. Entries shown in app but may not persist after refresh.']);
+        setApiErrors(['Could not save to database. Entries shown but may not persist after refresh.']);
       }
     }
 
     setStatus('done');
   }
 
-  // ── Counts ────────────────────────────────────────────────────────────────
+  /* ── Counts ──────────────────────────────────────────────── */
 
   const newCount     = rows.filter(r => r.status === 'new').length;
   const dupCount     = rows.filter(r => r.status === 'duplicate').length;
   const unknownCount = rows.filter(r => r.status === 'unknown').length;
   const selCount     = selected.size;
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  /* ── Render ──────────────────────────────────────────────── */
 
   return (
     <div className="modal-scrim" style={{ zIndex: 550 }} onClick={onClose}>
@@ -325,7 +299,7 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
 
         <div className="modal-body">
 
-          {/* ── Idle / Error ─────────────────────────────────────────────── */}
+          {/* Idle / Error */}
           {(status === 'idle' || status === 'error') && (
             <>
               <div
@@ -370,14 +344,14 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
             </>
           )}
 
-          {/* ── Parsing / Importing ──────────────────────────────────────── */}
+          {/* Parsing / Importing */}
           {(status === 'parsing' || status === 'importing') && (
             <div className="import-loading">
               {status === 'parsing' ? 'Parsing file…' : 'Importing entries…'}
             </div>
           )}
 
-          {/* ── Done ─────────────────────────────────────────────────────── */}
+          {/* Done */}
           {status === 'done' && (
             <div className="import-done">
               <div className="import-done-ring"><IconCheck size={32} /></div>
@@ -399,14 +373,12 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
             </div>
           )}
 
-          {/* ── Preview ──────────────────────────────────────────────────── */}
+          {/* Preview */}
           {status === 'preview' && (
             <>
               <div className="import-summary">
                 <span className="status-tag new">{newCount} new</span>
-                {dupCount > 0 && (
-                  <span className="status-tag dup">{dupCount} duplicate</span>
-                )}
+                {dupCount > 0 && <span className="status-tag dup">{dupCount} duplicate</span>}
                 {unknownCount > 0 && (
                   <span className="status-tag unknown" style={{
                     background: 'var(--warning-bg, #fef3c7)',
@@ -419,12 +391,7 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
                     {unknownCount} unknown project
                   </span>
                 )}
-                <span style={{
-                  marginLeft: 'auto',
-                  fontSize: 11,
-                  color: 'var(--ink-fade)',
-                  fontFamily: 'var(--font-mono)',
-                }}>
+                <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--ink-fade)', fontFamily: 'var(--font-mono)' }}>
                   {selCount} selected
                 </span>
               </div>
@@ -448,11 +415,11 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
                   </thead>
                   <tbody>
                     {rows.map((row, i) => {
-                      const isSel    = selected.has(i);
+                      const isSel     = selected.has(i);
                       const isUnknown = row.status === 'unknown';
-                      const proj     = row.converted ? PROJECT_BY_ID[row.converted.projectId] : null;
-                      const h        = row.displayHours;
-                      const isMtg    = isExternal(row.raw)
+                      const proj      = row.converted ? (projectById[row.converted.projectId] as ProjectWithMeta | undefined) : null;
+                      const h         = row.displayHours;
+                      const isMtg     = isExternal(row.raw)
                         ? (row.raw as ExternalEntry).isMeeting
                         : (row.raw as Entry).type === 'meeting';
 
@@ -467,19 +434,14 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
                           }}
                         >
                           <td>
-                            {!isUnknown && (
-                              <div className={`row-checkbox${isSel ? ' checked' : ''}`} />
-                            )}
+                            {!isUnknown && <div className={`row-checkbox${isSel ? ' checked' : ''}`} />}
                           </td>
                           <td className="mono" style={{ fontSize: 12, color: 'var(--ink-fade)' }}>
                             {row.raw.date}
                           </td>
                           <td>
                             {proj ? (
-                              <ProjectPill
-                                project={proj}
-                                clientName={proj.clientId !== 'goku' ? proj.clientName : undefined}
-                              />
+                              <ProjectPill project={proj} clientName={proj.clientName} />
                             ) : (
                               <span style={{
                                 fontFamily: 'var(--font-mono)',
@@ -526,14 +488,9 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
               )}
 
               {unknownCount > 0 && (
-                <p style={{
-                  marginTop: 12,
-                  fontSize: 12,
-                  color: 'var(--ink-fade)',
-                  fontFamily: 'var(--font-mono)',
-                }}>
+                <p style={{ marginTop: 12, fontSize: 12, color: 'var(--ink-fade)', fontFamily: 'var(--font-mono)' }}>
                   ⚠ Unknown project rows cannot be imported.
-                  Add the project in Settings → Clients & Projects first.
+                  Add the project in Settings → Clients &amp; Projects first.
                 </p>
               )}
             </>
@@ -545,10 +502,7 @@ export default function ImportModal({ existingEntries, onImport, onClose }: Impo
         <div className="modal-footer">
           {status === 'preview' && (
             <>
-              <button
-                className="btn btn-ghost"
-                onClick={() => { setStatus('idle'); setRows([]); setSelected(new Set()); }}
-              >
+              <button className="btn btn-ghost" onClick={() => { setStatus('idle'); setRows([]); setSelected(new Set()); }}>
                 Back
               </button>
               <button className="btn btn-ghost" onClick={onClose}>Cancel</button>

@@ -1,20 +1,22 @@
 'use client';
 
 import { useState } from 'react';
-import type { Entry } from '@/lib/data';
-import { MEMBERS, PROJECT_BY_ID, entryHours, pad, dowShort } from '@/lib/data';
+import type { Entry, Member, Project } from '@/lib/data';
+import { entryHours, pad, dowShort } from '@/lib/data';
 import ProjectPill from './ProjectPill';
 import ConfirmDialog from './ConfirmDialog';
 import { IconUndo, IconTrash } from './Icons';
 
-const ACTIVE_MEMBERS = MEMBERS.filter(m => m.active);
+type ProjectWithMeta = Project & { clientId: string; clientName: string };
 
 function fmt(h: number) { return h % 1 === 0 ? String(h) : h.toFixed(1); }
 
 interface TrashPageProps {
-  entries:   Entry[];
+  entries: Entry[];
+  members: Member[];
+  projectById: Record<string, ProjectWithMeta>;
   onRestore: (ids: Set<number>) => void;
-  onDelete:  (ids: Set<number>) => void;
+  onDelete: (ids: Set<number>) => void;
   showToast: (text: string, action?: { label: string; cb: () => void }) => void;
 }
 
@@ -28,7 +30,6 @@ function EmptyTrash() {
         <line x1="28" y1="34" x2="28" y2="48" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="2 3"/>
         <line x1="36" y1="34" x2="36" y2="48" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="2 3"/>
         <line x1="44" y1="34" x2="44" y2="48" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="2 3"/>
-        {/* small sparkle */}
         <path d="M54 12l1 3 3 1-3 1-1 3-1-3-3-1 3-1z" fill="currentColor" opacity="0.5"/>
       </svg>
       <h3>Trash is empty</h3>
@@ -37,7 +38,7 @@ function EmptyTrash() {
   );
 }
 
-export default function TrashPage({ entries, onRestore, onDelete, showToast }: TrashPageProps) {
+export default function TrashPage({ entries, members, projectById, onRestore, onDelete, showToast }: TrashPageProps) {
   const trashed = entries.filter(e => e.trashed);
   const [selected, setSelected]     = useState<Set<number>>(new Set());
   const [confirm, setConfirm]       = useState<null | 'single' | 'bulk' | 'all'>(null);
@@ -70,7 +71,7 @@ export default function TrashPage({ entries, onRestore, onDelete, showToast }: T
     const count = ids.size;
     showToast(`${count} ${count === 1 ? 'entry' : 'entries'} restored`, {
       label: 'Undo',
-      cb: () => { onDelete(ids); }, // re-trash to undo restore
+      cb: () => { onDelete(ids); },
     });
     if (selected.size > 0) setSelected(new Set());
   }
@@ -120,7 +121,7 @@ export default function TrashPage({ entries, onRestore, onDelete, showToast }: T
             <th style={{ width: 50 }}>Day</th>
             <th style={{ width: 200 }}>Project</th>
             <th>Task</th>
-            {ACTIVE_MEMBERS.map(m => (
+            {members.map(m => (
               <th key={m.id} className="num" style={{ width: 44 }}>{m.init}</th>
             ))}
             <th className="num" style={{ width: 60 }}>Total</th>
@@ -129,7 +130,7 @@ export default function TrashPage({ entries, onRestore, onDelete, showToast }: T
         </thead>
         <tbody>
           {trashed.map(entry => {
-            const proj  = PROJECT_BY_ID[entry.projectId];
+            const proj  = projectById[entry.projectId];
             const total = entryHours(entry);
             const d     = new Date(entry.date + 'T00:00:00');
             return (
@@ -148,13 +149,13 @@ export default function TrashPage({ entries, onRestore, onDelete, showToast }: T
                   {dowShort(d)}
                 </td>
                 <td>
-                  {proj && <ProjectPill project={proj} clientName={proj.clientId !== 'goku' ? proj.clientName : undefined} />}
+                  {proj && <ProjectPill project={proj} clientName={proj.clientName} />}
                 </td>
                 <td className="task-cell">
                   {entry.type === 'meeting' && <span className="meet">Meeting</span>}
                   {entry.task}
                 </td>
-                {ACTIVE_MEMBERS.map(m => {
+                {members.map(m => {
                   const h = entry.type === 'task' ? (entry.hours[m.id] ?? 0) : 0;
                   return (
                     <td key={m.id} className={`hrs${h === 0 ? ' zero' : ''}`}>

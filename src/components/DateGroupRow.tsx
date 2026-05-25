@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { dowFull, monShort, fmtDate, TODAY } from '@/lib/data';
+import { dowFull, monShort, fmtDate } from '@/lib/data';
 
 function fmt(h: number) {
   return h % 1 === 0 ? String(h) : h.toFixed(1);
@@ -11,7 +11,7 @@ export const DateGroupRow = React.forwardRef<
   HTMLTableRowElement,
   { date: Date; colSpan: number }
 >(function DateGroupRow({ date, colSpan }, ref) {
-  const isToday = fmtDate(date) === fmtDate(TODAY);
+  const isToday = fmtDate(date) === fmtDate(new Date());
   return (
     <tr className="date-group-row" ref={ref}>
       <td colSpan={colSpan}>
