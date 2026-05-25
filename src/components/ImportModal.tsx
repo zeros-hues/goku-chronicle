@@ -85,7 +85,7 @@ interface ImportModalProps {
   existingEntries: Entry[];
   clients: Client[];
   members: Member[];
-  onImport: (entries: Entry[]) => void;
+  onImport: (entries: Entry[]) => Promise<void>;
   onClose: () => void;
 }
 
@@ -253,25 +253,10 @@ export default function ImportModal({ existingEntries, clients, members, onImpor
       .map(i => rows[i].converted)
       .filter((e): e is Entry => e !== null);
 
-    onImport(toImport);
-
-    const externalRows = Array.from(selected)
-      .map(i => rows[i])
-      .filter(r => isExternal(r.raw) && r.converted !== null)
-      .map(r => r.raw as ExternalEntry);
-
-    if (externalRows.length > 0) {
-      try {
-        const res = await fetch('/api/import', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ entries: externalRows, skipDuplicates: true }),
-        });
-        const data = await res.json() as { imported: number; skipped: number; errors: string[] };
-        if (data.errors?.length) setApiErrors(data.errors);
-      } catch {
-        setApiErrors(['Could not save to database. Entries shown but may not persist after refresh.']);
-      }
+    try {
+      await onImport(toImport);
+    } catch {
+      setApiErrors(['Could not save to database. Entries shown but may not persist after refresh.']);
     }
 
     setStatus('done');
