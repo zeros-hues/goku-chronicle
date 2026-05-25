@@ -1,12 +1,10 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { MEMBERS, CLIENTS, PROJECT_BY_ID, entryHours, entryMemberHours, fmtDate, TODAY, dowShort, pad } from '@/lib/data';
-import type { Entry } from '@/lib/data';
+import { entryHours, entryMemberHours, fmtDate, dowShort, pad } from '@/lib/data';
+import type { Entry, Client, Member, Project } from '@/lib/data';
 import ProjectPill from './ProjectPill';
 import { IconDownload } from './Icons';
-
-const ACTIVE_MEMBERS = MEMBERS.filter(m => m.active);
 
 type RangeId = 'this-month' | 'last-month' | 'this-year' | 'all' | 'custom';
 
@@ -17,6 +15,8 @@ const RANGES: { id: RangeId; label: string }[] = [
   { id: 'all',        label: 'All time'     },
   { id: 'custom',     label: 'Custom range' },
 ];
+
+type ProjectWithMeta = Project & { clientId: string; clientName: string };
 
 function fmt(h: number) { return h % 1 === 0 ? String(h) : h.toFixed(1); }
 
@@ -30,54 +30,68 @@ function Switch({ on, onChange }: { on: boolean; onChange: () => void }) {
 
 interface ExportPageProps {
   entries: Entry[];
+  clients: Client[];
+  members: Member[];
+  projectById: Record<string, ProjectWithMeta>;
   showToast: (text: string, action?: { label: string; cb: () => void }) => void;
 }
 
-export default function ExportPage({ entries: all, showToast }: ExportPageProps) {
+export default function ExportPage({ entries: all, clients, members, projectById, showToast }: ExportPageProps) {
+  const today = useMemo(() => new Date(), []);
+  const todayStr = fmtDate(today);
+
+  const firstClientId = clients[0]?.id ?? '';
+  const firstClient = clients[0];
+  const defaultBilling = firstClient?.hasRetainership ? 'retainer' : firstClient ? 'internal' : 'all';
+
   const [range, setRange]             = useState<RangeId>('this-month');
-  const [customStart, setCustomStart] = useState(() => { const d = new Date(TODAY); d.setDate(d.getDate() - 30); return fmtDate(d); });
-  const [customEnd, setCustomEnd]     = useState(() => fmtDate(TODAY));
-  const [client, setClient]           = useState('appasamy');
-  const [billing, setBilling]         = useState('retainer');
-  const [anon, setAnon]               = useState(true);
+  const [customStart, setCustomStart] = useState(() => { const d = new Date(today); d.setDate(d.getDate() - 30); return fmtDate(d); });
+  const [customEnd, setCustomEnd]     = useState(todayStr);
+  const [client, setClient]           = useState(firstClientId || 'all');
+  const [billing, setBilling]         = useState(defaultBilling);
+  const [anon, setAnon]               = useState(firstClient?.hasRetainership ?? true);
+
+  const selectedClient = clients.find(c => c.id === client);
+  const isInternalClient = selectedClient ? !selectedClient.hasRetainership : false;
 
   function handleClientChange(newClient: string) {
     setClient(newClient);
+    const c = clients.find(x => x.id === newClient);
     let newBilling: string;
-    if (newClient === 'goku') {
-      newBilling = 'internal';
-    } else if (newClient === 'appasamy') {
-      newBilling = 'retainer';
-    } else {
+    if (!c) {
       newBilling = 'all';
+    } else if (!c.hasRetainership) {
+      newBilling = 'internal';
+    } else {
+      newBilling = 'retainer';
     }
     setBilling(newBilling);
-    setAnon(newClient === 'appasamy' && newBilling === 'retainer');
+    setAnon(c?.hasRetainership && newBilling === 'retainer' ? true : false);
   }
 
   function handleBillingChange(newBilling: string) {
     setBilling(newBilling);
-    setAnon(client === 'appasamy' && newBilling === 'retainer');
+    setAnon(selectedClient?.hasRetainership === true && newBilling === 'retainer');
   }
 
   const [rangeStart, rangeEnd] = useMemo(() => {
-    const t = new Date(TODAY);
+    const t = new Date(today);
     if (range === 'this-month') return [new Date(t.getFullYear(), t.getMonth(), 1), t];
     if (range === 'last-month') return [new Date(t.getFullYear(), t.getMonth() - 1, 1), new Date(t.getFullYear(), t.getMonth(), 0)];
     if (range === 'this-year')  return [new Date(t.getFullYear(), 0, 1), new Date(t.getFullYear(), 11, 31)];
     if (range === 'custom')     return [new Date(customStart + 'T00:00:00'), new Date(customEnd + 'T00:00:00')];
     return [new Date(2000, 0, 1), new Date(2100, 0, 1)];
-  }, [range, customStart, customEnd]);
+  }, [range, customStart, customEnd, today]);
 
   const filtered = useMemo(() => all.filter(e => {
     if (e.trashed) return false;
     const d = new Date(e.date + 'T00:00:00');
     if (d < rangeStart || d > rangeEnd) return false;
-    const proj = PROJECT_BY_ID[e.projectId];
+    const proj = projectById[e.projectId];
     if (client !== 'all' && proj?.clientId !== client) return false;
     if (billing !== 'all' && e.billing !== billing) return false;
     return true;
-  }).sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id), [all, rangeStart, rangeEnd, client, billing]);
+  }).sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id), [all, rangeStart, rangeEnd, client, billing, projectById]);
 
   const totalHrs = filtered.reduce((s, e) => s + entryHours(e), 0);
 
@@ -88,17 +102,17 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
     if (anon) {
       headers.push('No. of resources', isRetainerAnon ? 'Working Hours' : 'Hours');
     } else {
-      ACTIVE_MEMBERS.forEach(m => headers.push(m.init));
+      members.forEach(m => headers.push(m.init));
     }
     headers.push('Total');
 
     const rows = filtered.map(e => {
-      const proj = PROJECT_BY_ID[e.projectId];
+      const proj = projectById[e.projectId];
       const d = new Date(e.date + 'T00:00:00');
       const row: (string | number)[] = [
         `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`,
         dowShort(d),
-        `"${(proj?.clientId !== 'goku' ? proj?.clientName + ' · ' : '') + (proj?.name ?? e.projectId)}"`,
+        `"${(proj?.clientName ? proj.clientName + ' · ' : '') + (proj?.name ?? e.projectId)}"`,
         `"${e.task.replace(/"/g, '""')}"`,
       ];
       if (anon) {
@@ -112,7 +126,7 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
           row.push(vals.length, vals.join('+'));
         }
       } else {
-        ACTIVE_MEMBERS.forEach(m => row.push(e.type === 'task' ? (e.hours[m.id] ?? 0) : ''));
+        members.forEach(m => row.push(e.type === 'task' ? (e.hours[m.id] ?? 0) : ''));
       }
       row.push(entryHours(e));
       return row.join(',');
@@ -131,7 +145,7 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `chronicle-export-${fmtDate(TODAY)}.csv`;
+    a.download = `chronicle-export-${todayStr}.csv`;
     a.click();
     URL.revokeObjectURL(url);
     showToast('Excel downloaded');
@@ -148,7 +162,7 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `chronicle-backup-${fmtDate(TODAY)}.json`;
+    a.download = `chronicle-backup-${todayStr}.json`;
     a.click();
     URL.revokeObjectURL(url);
     showToast('JSON downloaded');
@@ -200,12 +214,12 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
             <label className="field-label">Client</label>
             <select className="field-input" value={client} onChange={e => handleClientChange(e.target.value)}>
               <option value="all">All clients</option>
-              {CLIENTS.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
 
-          {/* Billing — hidden for Goku Studio (always Internal) */}
-          {client !== 'goku' ? (
+          {/* Billing */}
+          {!isInternalClient ? (
             <div className="input-block">
               <label className="field-label">Billing type</label>
               <select className="field-input" value={billing} onChange={e => handleBillingChange(e.target.value)}>
@@ -302,7 +316,7 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
                         <th className="num" style={{ width: 100 }}>{isRetainerAnon ? 'Working Hours' : 'Hours'}</th>
                       </>
                     ) : (
-                      ACTIVE_MEMBERS.map(m => (
+                      members.map(m => (
                         <th key={m.id} className="num member-col-h"
                           style={{
                             width: 52,
@@ -319,7 +333,7 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
                 </thead>
                 <tbody>
                   {filtered.slice(0, 60).map(e => {
-                    const proj = PROJECT_BY_ID[e.projectId];
+                    const proj = projectById[e.projectId];
                     const d = new Date(e.date + 'T00:00:00');
                     const anonCount = e.type === 'meeting' ? (e.meetingPeople ?? 0) : Object.values(e.hours).filter(v => v > 0).length;
                     const anonWorkHrs = e.type === 'meeting'
@@ -329,7 +343,7 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
                       <tr key={e.id} className="entry" style={{ cursor: 'default' }}>
                         <td className="mono" style={{ color: 'var(--ink-fade)', fontSize: 12 }}>{pad(d.getDate())}/{pad(d.getMonth() + 1)}</td>
                         <td style={{ fontFamily: 'var(--font-serif)', fontStyle: 'italic', color: 'var(--ink-fade)', fontSize: 12 }}>{dowShort(d)}</td>
-                        <td>{proj && <ProjectPill project={proj} clientName={proj.clientId !== 'goku' ? proj.clientName : undefined} />}</td>
+                        <td>{proj && <ProjectPill project={proj} clientName={proj.clientName} />}</td>
                         <td className="task-cell" style={{ fontSize: 12.5 }}>
                           {e.type === 'meeting' && <span className="meet">Meeting</span>}
                           {e.task}
@@ -340,7 +354,7 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
                             <td className="hrs"><span className="v">{anonWorkHrs}</span></td>
                           </>
                         ) : (
-                          ACTIVE_MEMBERS.map(m => {
+                          members.map(m => {
                             const v = entryMemberHours(e, m.id);
                             return (
                               <td key={m.id} className={`hrs${v === 0 ? ' zero' : ''}`}

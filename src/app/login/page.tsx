@@ -3,9 +3,10 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { signIn } from 'next-auth/react';
-import { MEMBERS, HOLIDAYS, fmtDate, isWeekend, TODAY } from '@/lib/data';
+import { fmtDate, isWeekend } from '@/lib/data';
 
-const TODAY_STR = fmtDate(TODAY);
+const TODAY_STR = fmtDate(new Date());
+const HOLIDAYS: Record<string, string> = {};
 
 interface YearGridDay {
   date: string;
@@ -16,14 +17,15 @@ interface YearGridDay {
 }
 
 function buildHeatmap(daily: Record<string, number>): YearGridDay[] {
-  const start = new Date(TODAY);
+  const now = new Date();
+  const start = new Date(now);
   start.setDate(start.getDate() - 26 * 7);
   const dow = (start.getDay() + 6) % 7;
   start.setDate(start.getDate() - dow);
 
   const cells: YearGridDay[] = [];
   const d = new Date(start);
-  while (d <= new Date(TODAY)) {
+  while (d <= now) {
     const s = fmtDate(d);
     cells.push({
       date: s,
@@ -94,7 +96,6 @@ export default function LoginPage() {
 
   const cells = buildHeatmap(daily);
   const weeks = Math.ceil(cells.length / 7);
-  const activeMembers = MEMBERS.filter(m => m.active);
 
   function shake() {
     setShaking(true);
@@ -258,14 +259,6 @@ export default function LoginPage() {
             </a>
           </div>
 
-          <div className="recent-users">
-            {activeMembers.map(m => (
-              <div key={m.id} className="ru" title={m.name}>
-                <div className="av" style={{ background: m.color }}>{m.init.slice(0, 1)}</div>
-                <span className="nm">{m.init}</span>
-              </div>
-            ))}
-          </div>
 
         </div>
       </div>

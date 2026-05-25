@@ -2,16 +2,12 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
-  MEMBERS, CLIENTS, PROJECT_BY_ID,
-  fmtDate, TODAY, entryHours, entryMemberHours,
+  fmtDate, entryHours, entryMemberHours,
   dowFull, dowShort, monShort, pad,
 } from '@/lib/data';
-import type { Entry, BillingType } from '@/lib/data';
+import type { Entry, BillingType, Client, Member, Project } from '@/lib/data';
 import ProjectPill from './ProjectPill';
 import { IconSearch, IconCaret, IconTrash, IconCalendar, IconEdit } from './Icons';
-
-const ACTIVE_MEMBERS = MEMBERS.filter(m => m.active);
-const TODAY_STR = fmtDate(TODAY);
 
 type DateRangeId = 'this-month' | 'last-month' | 'last-30' | 'last-60' | 'this-year' | 'all';
 type SortKey = 'date' | 'project' | 'total';
@@ -25,6 +21,8 @@ const DATE_RANGES: { id: DateRangeId; label: string }[] = [
   { id: 'this-year',  label: 'This year'    },
   { id: 'all',        label: 'All entries'  },
 ];
+
+type ProjectWithMeta = Project & { clientId: string; clientName: string };
 
 function fmt(h: number) { return h % 1 === 0 ? String(h) : h.toFixed(1); }
 
@@ -65,7 +63,6 @@ function SortMark({ colKey, sortBy }: { colKey: SortKey; sortBy: { key: SortKey;
   return <span className="sort-mark">{sortBy.dir === 'desc' ? '↓' : '↑'}</span>;
 }
 
-/* Empty state illustration */
 function EmptyTimesheet({ hasFilters }: { hasFilters: boolean }) {
   return (
     <div className="empty">
@@ -89,6 +86,9 @@ function EmptyTimesheet({ hasFilters }: { hasFilters: boolean }) {
 
 interface TimesheetProps {
   entries: Entry[];
+  clients: Client[];
+  members: Member[];
+  projectById: Record<string, ProjectWithMeta>;
   onTrash: (ids: Set<number>) => void;
   onRestore: (ids: Set<number>) => void;
   onEdit: (entry: Entry) => void;
@@ -97,7 +97,10 @@ interface TimesheetProps {
   searchRef?: React.RefObject<HTMLInputElement>;
 }
 
-export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToast, newEntryId, searchRef }: TimesheetProps) {
+export default function Timesheet({ entries, clients, members, projectById, onTrash, onRestore, onEdit, showToast, newEntryId, searchRef }: TimesheetProps) {
+  const today = useMemo(() => new Date(), []);
+  const TODAY_STR = fmtDate(today);
+
   const [search, setSearch]     = useState('');
   const [range, setRange]       = useState<DateRangeId>('this-month');
   const [client, setClient]     = useState<string>('all');
@@ -112,20 +115,20 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
   const searchInputRef = searchRef ?? internalSearchRef;
 
   const [rangeStart, rangeEnd] = useMemo(() => {
-    const t = new Date(TODAY);
+    const t = new Date(today);
     if (range === 'this-month') return [new Date(t.getFullYear(), t.getMonth(), 1), new Date(t.getFullYear(), t.getMonth() + 1, 0)];
     if (range === 'last-month') return [new Date(t.getFullYear(), t.getMonth() - 1, 1), new Date(t.getFullYear(), t.getMonth(), 0)];
     if (range === 'last-30') { const s = new Date(t); s.setDate(t.getDate() - 30); return [s, t]; }
     if (range === 'last-60') { const s = new Date(t); s.setDate(t.getDate() - 60); return [s, t]; }
     if (range === 'this-year') return [new Date(t.getFullYear(), 0, 1), new Date(t.getFullYear(), 11, 31)];
     return [new Date(2000, 0, 1), new Date(2100, 0, 1)];
-  }, [range]);
+  }, [range, today]);
 
   const filtered = useMemo(() => entries.filter(e => {
     if (e.trashed) return false;
     const d = new Date(e.date + 'T00:00:00');
     if (d < rangeStart || d > rangeEnd) return false;
-    const proj = PROJECT_BY_ID[e.projectId];
+    const proj = projectById[e.projectId];
     if (client !== 'all' && proj?.clientId !== client) return false;
     if (billing !== 'all' && e.billing !== billing) return false;
     if (member !== 'all' && e.type !== 'meeting' && !e.hours[member]) return false;
@@ -134,7 +137,7 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
       if (!e.task.toLowerCase().includes(s) && !proj?.name.toLowerCase().includes(s)) return false;
     }
     return true;
-  }), [entries, rangeStart, rangeEnd, client, billing, member, search]);
+  }), [entries, rangeStart, rangeEnd, client, billing, member, search, projectById]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, Entry[]>();
@@ -156,22 +159,20 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
       const dayEntries = map.get(date)!.slice();
       if (sortBy.key === 'project') {
         dayEntries.sort((a, b) => {
-          const pa = PROJECT_BY_ID[a.projectId]?.name ?? '';
-          const pb = PROJECT_BY_ID[b.projectId]?.name ?? '';
+          const pa = projectById[a.projectId]?.name ?? '';
+          const pb = projectById[b.projectId]?.name ?? '';
           return sortBy.dir === 'desc' ? pb.localeCompare(pa) : pa.localeCompare(pb);
         });
       }
       return { date, entries: dayEntries };
     });
-  }, [filtered, sortBy]);
+  }, [filtered, sortBy, projectById]);
 
   const totalInView = filtered.reduce((s, e) => s + entryHours(e), 0);
 
-  // Scroll to and highlight new entry when newEntryId changes
   useEffect(() => {
     if (!newEntryId) return;
     setHighlightId(newEntryId);
-    // Expand to show the entry's date group and find the row
     const timeout = setTimeout(() => {
       const el = document.querySelector(`[data-entry-id="${newEntryId}"]`);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -195,7 +196,7 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
     setExpanded(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }
 
-  function trashEntries(ids: Set<number>) {
+  function trashSelectedEntries(ids: Set<number>) {
     onTrash(ids);
     const n = ids.size;
     showToast(
@@ -205,7 +206,7 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
   }
 
   function trashSelected() {
-    trashEntries(selected);
+    trashSelectedEntries(selected);
     setSelected(new Set());
   }
 
@@ -213,17 +214,15 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
 
   const hasFilters = client !== 'all' || billing !== 'all' || member !== 'all' || !!search;
   const rangeLabel   = DATE_RANGES.find(r => r.id === range)?.label ?? 'This month';
-  const clientLabel  = client === 'all' ? 'All clients' : CLIENTS.find(c => c.id === client)?.name ?? 'All clients';
+  const clientLabel  = client === 'all' ? 'All clients' : clients.find(c => c.id === client)?.name ?? 'All clients';
   const billingLabel = billing === 'all' ? 'All billing'
     : billing === 'retainer' ? 'Retainership'
     : billing === 'out' ? 'Out of Retainer'
     : 'Internal';
-  const memberLabel  = member === 'all' ? 'All members' : MEMBERS.find(m => m.id === member)?.name ?? 'All members';
+  const memberLabel  = member === 'all' ? 'All members' : members.find(m => m.id === member)?.name ?? 'All members';
 
-  // Single selected entry
   const singleSelected = selected.size === 1 ? Array.from(selected)[0] : null;
 
-  // E shortcut: edit single selected entry
   useEffect(() => {
     function onKey(ev: KeyboardEvent) {
       if (ev.key !== 'e' && ev.key !== 'E') return;
@@ -262,7 +261,7 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
 
         <FilterChip label={clientLabel} dot={client !== 'all'}
           open={openDrop === 'client'} onToggle={() => drop('client')}>
-          {[{ id: 'all', label: 'All clients' }, ...CLIENTS.map(c => ({ id: c.id, label: c.name }))].map(o => (
+          {[{ id: 'all', label: 'All clients' }, ...clients.map(c => ({ id: c.id, label: c.name }))].map(o => (
             <div key={o.id} className={'dropdown-item' + (client === o.id ? ' selected' : '')}
               onClick={() => { setClient(o.id); setOpenDrop(null); }}>{o.label}</div>
           ))}
@@ -286,7 +285,7 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
           <div className={'dropdown-item' + (member === 'all' ? ' selected' : '')}
             onClick={() => { setMember('all'); setOpenDrop(null); }}>All members</div>
           <div className="dropdown-section">Team</div>
-          {ACTIVE_MEMBERS.map(m => (
+          {members.map(m => (
             <div key={m.id} className={'dropdown-item' + (member === m.id ? ' selected' : '')}
               onClick={() => { setMember(m.id); setOpenDrop(null); }}>
               <span style={{ width: 18, height: 18, borderRadius: '50%', background: m.color, display: 'grid', placeItems: 'center', color: 'var(--paper)', fontFamily: 'var(--font-serif)', fontSize: 9, flexShrink: 0 }}>
@@ -322,7 +321,7 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
                   Project <SortMark colKey="project" sortBy={sortBy} />
                 </th>
                 <th>Task</th>
-                {ACTIVE_MEMBERS.map(m => (
+                {members.map(m => (
                   <th key={m.id} className="num member-col-h"
                     style={{
                       width: 56,
@@ -344,7 +343,7 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
                 const isToday = date === TODAY_STR;
                 const dailyTotal = dayEntries.reduce((s, e) => s + entryHours(e), 0);
                 const memberTotals = Object.fromEntries(
-                  ACTIVE_MEMBERS.map(m => [m.id, dayEntries.reduce((s, e) => s + entryMemberHours(e, m.id), 0)])
+                  members.map(m => [m.id, dayEntries.reduce((s, e) => s + entryMemberHours(e, m.id), 0)])
                 );
                 const allIds = dayEntries.map(e => e.id);
                 const allSelected = allIds.length > 0 && allIds.every(id => selected.has(id));
@@ -367,7 +366,7 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
                           }}
                         />
                       </td>
-                      <td colSpan={4 + ACTIVE_MEMBERS.length + 1}>
+                      <td colSpan={4 + members.length + 1}>
                         <div className="date-block">
                           <span className="day">{d.getDate()}</span>
                           <span className="mon">{monShort(d)} {d.getFullYear()}</span>
@@ -378,7 +377,7 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
                     </tr>
 
                     {dayEntries.map(e => {
-                      const proj = PROJECT_BY_ID[e.projectId];
+                      const proj = projectById[e.projectId];
                       const isExp = expanded.has(e.id);
                       const isSel = selected.has(e.id);
                       const isHighlighted = highlightId === e.id;
@@ -402,14 +401,14 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
                             <td style={{ fontFamily: 'var(--font-serif)', fontStyle: 'italic', color: 'var(--ink-fade)', fontSize: 13 }}>
                               {dowShort(d)}
                             </td>
-                            <td>{proj && <ProjectPill project={proj} clientName={proj.clientId !== 'goku' ? proj.clientName : undefined} />}</td>
+                            <td>{proj && <ProjectPill project={proj} clientName={proj.clientId !== proj.clientId.slice(0, -5) ? proj.clientName : undefined} />}</td>
                             <td className="task-cell">
                               {e.type === 'meeting' && (
                                 <span className="meet">Meeting · {e.meetingPeople}p · {e.meetingDuration}h</span>
                               )}
                               {e.task}
                             </td>
-                            {ACTIVE_MEMBERS.map(m => {
+                            {members.map(m => {
                               const v = entryMemberHours(e, m.id);
                               const tint = v > 0 ? `color-mix(in oklab, ${m.color} 65%, var(--ink) 35%)` : undefined;
                               return (
@@ -431,7 +430,7 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
 
                           {isExp && (
                             <tr className="expanded-detail">
-                              <td colSpan={5 + ACTIVE_MEMBERS.length + 1}>
+                              <td colSpan={5 + members.length + 1}>
                                 <div className="expanded-detail-content">
                                   <div className="description">{e.task}</div>
                                   <div className="chip-row">
@@ -441,7 +440,7 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
                                       </div>
                                     ) : (
                                       Object.entries(e.hours).map(([mid, h]) => {
-                                        const mem = MEMBERS.find(x => x.id === mid);
+                                        const mem = members.find(x => x.id === mid);
                                         if (!mem) return null;
                                         return (
                                           <div key={mid} className="member-chip">
@@ -474,7 +473,7 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
                                       style={{ color: 'var(--accent-deep)' }}
                                       onClick={ev => {
                                         ev.stopPropagation();
-                                        trashEntries(new Set([e.id]));
+                                        trashSelectedEntries(new Set([e.id]));
                                         setExpanded(prev => { const n = new Set(prev); n.delete(e.id); return n; });
                                       }}
                                     >
@@ -498,7 +497,7 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
                       <td className="daily-total-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'left', color: 'var(--ink-fade)', paddingLeft: 10 }}>
                         {dayEntries.length} {dayEntries.length === 1 ? 'entry' : 'entries'}
                       </td>
-                      {ACTIVE_MEMBERS.map(m => {
+                      {members.map(m => {
                         const v = memberTotals[m.id];
                         const tint = v > 0 ? `color-mix(in oklab, ${m.color} 75%, var(--ink) 25%)` : undefined;
                         return (
@@ -542,7 +541,6 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
           </button>
         </div>
       )}
-
     </>
   );
 }

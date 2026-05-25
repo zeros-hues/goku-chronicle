@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import type { Entry, Member } from '@/lib/data';
-import { PROJECT_BY_ID, entryHours } from '@/lib/data';
+import type { Entry, Member, Project } from '@/lib/data';
+import { entryHours } from '@/lib/data';
 import ProjectPill from './ProjectPill';
 import { IconMeeting } from './Icons';
 
@@ -10,9 +10,12 @@ function fmt(h: number) {
   return h % 1 === 0 ? String(h) : h.toFixed(1);
 }
 
+type ProjectWithMeta = Project & { clientId: string; clientName: string };
+
 interface EntryRowProps {
   entry: Entry;
   members: Member[];
+  projectById: Record<string, ProjectWithMeta>;
   selected: boolean;
   onSelect: (id: number) => void;
   highlight?: boolean;
@@ -28,8 +31,8 @@ function HrsCell({ value }: { value: number }) {
   );
 }
 
-function ExpandedDetail({ entry, members }: { entry: Entry; members: Member[] }) {
-  const proj = PROJECT_BY_ID[entry.projectId];
+function ExpandedDetail({ entry, members, projectById }: { entry: Entry; members: Member[]; projectById: Record<string, ProjectWithMeta> }) {
+  const proj = projectById[entry.projectId];
   const activeMembers = members.filter(m => (entry.hours[m.id] ?? 0) > 0);
   const total = entryHours(entry);
 
@@ -78,9 +81,9 @@ function ExpandedDetail({ entry, members }: { entry: Entry; members: Member[] })
   );
 }
 
-export default function EntryRow({ entry, members, selected, onSelect, highlight }: EntryRowProps) {
+export default function EntryRow({ entry, members, projectById, selected, onSelect, highlight }: EntryRowProps) {
   const [expanded, setExpanded] = useState(false);
-  const proj = PROJECT_BY_ID[entry.projectId];
+  const proj = projectById[entry.projectId];
   const total = entryHours(entry);
 
   const rowClass = [
@@ -123,7 +126,7 @@ export default function EntryRow({ entry, members, selected, onSelect, highlight
         </td>
       </tr>
 
-      {expanded && <ExpandedDetail entry={entry} members={members} />}
+      {expanded && <ExpandedDetail entry={entry} members={members} projectById={projectById} />}
     </>
   );
 }

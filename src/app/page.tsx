@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { signOut } from 'next-auth/react';
+import { useSession, signOut } from 'next-auth/react';
 import Sidebar from '@/components/Sidebar';
 import TopBar from '@/components/TopBar';
 import Timesheet from '@/components/Timesheet';
@@ -13,8 +13,8 @@ import EntryDrawer from '@/components/NewEntryDrawer';
 import ImportModal from '@/components/ImportModal';
 import ShortcutsDialog from '@/components/ShortcutsDialog';
 import ActivityPanel from '@/components/ActivityPanel';
-import { MEMBERS, TODAY, dowFull, monShort, PROJECT_BY_ID } from '@/lib/data';
-import type { View, Theme, Entry, ActivityEvent } from '@/lib/data';
+import { dowFull, monShort } from '@/lib/data';
+import type { View, Theme, Entry, Client, Member, ActivityEvent } from '@/lib/data';
 import * as api from '@/lib/api';
 import { IconPlus, IconImport, IconTimesheet, IconDashboard, IconCheck } from '@/components/Icons';
 
@@ -29,7 +29,7 @@ let toastSeq = 0;
 let activitySeq = 0;
 
 function getTopBar(view: View): { title: string; sub: string } {
-  const d = TODAY;
+  const d = new Date();
   const dateStr = `${dowFull(d)}, ${d.getDate()} ${monShort(d)} ${d.getFullYear()}`;
   if (view === 'timesheet') return { title: 'Timesheet', sub: `Today is ${dateStr}` };
   if (view === 'dashboard') return { title: 'Dashboard', sub: 'How the studio is spending its hours' };
@@ -41,16 +41,35 @@ function getTopBar(view: View): { title: string; sub: string } {
   return { title: view, sub: '' };
 }
 
+/* ── Placeholder member for sidebar before session loads ──── */
+const PLACEHOLDER_USER: Member = {
+  id: '',
+  name: '…',
+  init: '?',
+  avatarClass: 'av-0',
+  color: 'var(--ink-ghost)',
+  active: true,
+  wa: '',
+};
+
 export default function Page() {
-  const [view, setView]             = useState<View>('timesheet');
-  const [theme, setTheme]           = useState<Theme>(() => {
+  const { data: session }        = useSession();
+  const [view, setView]          = useState<View>('timesheet');
+  const [theme, setTheme]        = useState<Theme>(() => {
     if (typeof window !== 'undefined') {
       return (localStorage.getItem('chronicle-theme') as Theme) ?? 'light';
     }
     return 'light';
   });
-  const [entries, setEntries]       = useState<Entry[]>([]);
-  const [loading, setLoading]       = useState(true);
+
+  const [entries, setEntries]    = useState<Entry[]>([]);
+  const [clients, setClients]    = useState<Client[]>([]);
+  const [members, setMembers]    = useState<Member[]>([]);
+  const [holidays, setHolidays]  = useState<Record<string, string>>({});
+  const [hoursTarget, setHoursTarget] = useState(8);
+  const [loading, setLoading]    = useState(true);
+  const [dataError, setDataError] = useState(false);
+
   const [showDrawer, setShowDrawer] = useState(false);
   const [editEntry, setEditEntry]   = useState<Entry | undefined>(undefined);
   const [showImport, setShowImport] = useState(false);
@@ -71,22 +90,35 @@ export default function Page() {
   const trashCount = entries.filter(e => e.trashed).length;
 
   /* ── Initial data load ─────────────────────────────────── */
-  useEffect(() => {
-    async function load() {
-      try {
-        const [active, trashed] = await Promise.all([
-          api.fetchEntries(),
-          api.fetchTrash(),
-        ]);
-        setEntries([...active, ...trashed]);
-      } catch {
-        // Will show empty state — user can still add entries
-      } finally {
-        setLoading(false);
+  async function loadAll() {
+    setDataError(false);
+    setLoading(true);
+    try {
+      const [active, trashed, fetchedClients, fetchedMembers, account] = await Promise.all([
+        api.fetchEntries(),
+        api.fetchTrash(),
+        api.fetchClients(),
+        api.fetchMembers(),
+        api.fetchAccount(),
+      ]);
+      setEntries([...active, ...trashed]);
+      setClients(fetchedClients);
+      setMembers(fetchedMembers);
+      setHoursTarget(account.hoursTarget);
+
+      const hmap: Record<string, string> = {};
+      for (const h of account.holidays) {
+        hmap[h.date.slice(0, 10)] = h.label ?? '';
       }
+      setHolidays(hmap);
+    } catch {
+      setDataError(true);
+    } finally {
+      setLoading(false);
     }
-    load();
-  }, []);
+  }
+
+  useEffect(() => { loadAll(); }, []);
 
   /* ── Theme persistence ─────────────────────────────────── */
   useEffect(() => {
@@ -118,17 +150,15 @@ export default function Page() {
     if (timer) { clearTimeout(timer); toastTimers.current.delete(id); }
   }
 
-  /* ── Entry CRUD (all hit the API) ──────────────────────── */
+  /* ── Entry CRUD ────────────────────────────────────────── */
   async function handleSave(entry: Entry) {
-    // Optimistic insert with the temp ID from the drawer
     setEntries(prev => [entry, ...prev]);
     setNewEntryId(entry.id);
     try {
       const saved = await api.createEntry(entry);
-      // Swap temp entry for the real one returned by the API
       setEntries(prev => prev.map(e => e.id === entry.id ? saved : e));
       setNewEntryId(saved.id);
-      const proj = PROJECT_BY_ID[saved.projectId];
+      const proj = projectById[saved.projectId];
       const projName = proj?.name ?? saved.projectId;
       const taskLabel = saved.task.length > 30 ? saved.task.slice(0, 30) + '…' : saved.task;
       showToast(`Entry saved — ${projName} · ${taskLabel}`);
@@ -158,7 +188,6 @@ export default function Page() {
     try {
       await api.trashEntries(Array.from(ids));
     } catch {
-      // Revert on failure
       setEntries(prev => prev.map(e => ids.has(e.id) ? { ...e, trashed: false } : e));
       showToast('Failed to trash entries');
     }
@@ -185,12 +214,11 @@ export default function Page() {
 
   async function handleImport(newEntries: Entry[]) {
     try {
-      const result = await api.importEntries(newEntries);
-      // Re-fetch to get real entries from DB
-      const [active, trashed] = await Promise.all([
-        api.fetchEntries(),
-        api.fetchTrash(),
-      ]);
+      const memberById = Object.fromEntries(members.map(m => [m.id, m]));
+      const allProjects = clients.flatMap(c => c.projects.map(p => ({ ...p, clientId: c.id, clientName: c.name })));
+      const projectById = Object.fromEntries(allProjects.map(p => [p.id, p]));
+      const result = await api.importEntries(newEntries, memberById, projectById);
+      const [active, trashed] = await Promise.all([api.fetchEntries(), api.fetchTrash()]);
       setEntries([...active, ...trashed]);
       const n = result.imported;
       showToast(`${n} ${n === 1 ? 'entry' : 'entries'} imported`);
@@ -268,6 +296,23 @@ export default function Page() {
 
   const activityCount = activityLog.filter(e => e.ts > activityLastViewed).length;
 
+  /* ── Derived data ──────────────────────────────────────── */
+  const activeMembers = members.filter(m => m.active);
+  const allProjects = clients.flatMap(c => c.projects.map(p => ({ ...p, clientId: c.id, clientName: c.name })));
+  const projectById = Object.fromEntries(allProjects.map(p => [p.id, p]));
+
+  const currentUser: Member = session?.user
+    ? (members.find(m => m.name === session.user?.name) ?? {
+        id: '',
+        name: session.user.name ?? 'Admin',
+        init: (session.user.name ?? 'A').slice(0, 1).toUpperCase(),
+        avatarClass: 'av-0',
+        color: 'var(--ink-ghost)',
+        active: true,
+        wa: '',
+      })
+    : PLACEHOLDER_USER;
+
   const { title, sub } = getTopBar(view);
   const isTimesheetOrDash = view === 'timesheet' || view === 'dashboard';
 
@@ -304,7 +349,7 @@ export default function Page() {
         theme={theme}
         setTheme={setTheme}
         trashCount={trashCount}
-        currentUser={MEMBERS[0]}
+        currentUser={currentUser}
         onSignOut={() => signOut({ callbackUrl: '/login' })}
         activityCount={activityCount}
         onActivityClick={openActivity}
@@ -316,9 +361,19 @@ export default function Page() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: 'var(--ink-fade)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
             Loading…
           </div>
+        ) : dataError ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: 16 }}>
+            <p style={{ color: 'var(--ink-fade)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
+              Could not load data. Check your connection.
+            </p>
+            <button className="btn" onClick={loadAll}>Retry</button>
+          </div>
         ) : view === 'timesheet' ? (
           <Timesheet
             entries={entries}
+            clients={clients}
+            members={activeMembers}
+            projectById={projectById}
             onTrash={handleTrash}
             onRestore={handleRestore}
             onEdit={handleEdit}
@@ -327,19 +382,47 @@ export default function Page() {
             searchRef={searchRef}
           />
         ) : view === 'dashboard' ? (
-          <Dashboard entries={entries} />
+          <Dashboard
+            entries={entries}
+            members={activeMembers}
+            projectById={projectById}
+            holidays={holidays}
+            hoursTarget={hoursTarget}
+          />
         ) : view === 'export' ? (
-          <ExportPage entries={entries} showToast={showToast} />
+          <ExportPage
+            entries={entries}
+            clients={clients}
+            members={activeMembers}
+            projectById={projectById}
+            showToast={showToast}
+          />
         ) : view === 'trash' ? (
-          <TrashPage entries={entries} onRestore={handleRestore} onDelete={handleDelete} showToast={showToast} />
+          <TrashPage
+            entries={entries}
+            members={activeMembers}
+            projectById={projectById}
+            onRestore={handleRestore}
+            onDelete={handleDelete}
+            showToast={showToast}
+          />
         ) : (view === 'clients' || view === 'team' || view === 'account') ? (
-          <SettingsPage section={view} onNavigate={setView} showToast={showToast} />
+          <SettingsPage
+            section={view}
+            onNavigate={setView}
+            showToast={showToast}
+            onClientsChange={setClients}
+            onMembersChange={setMembers}
+            onHolidaysChange={setHolidays}
+          />
         ) : null}
       </div>
 
       {showDrawer && (
         <EntryDrawer
           entry={editEntry}
+          clients={clients}
+          members={activeMembers}
           onClose={handleDrawerClose}
           onSave={handleDrawerSave}
         />
@@ -348,6 +431,8 @@ export default function Page() {
       {showImport && (
         <ImportModal
           existingEntries={entries}
+          clients={clients}
+          members={members}
           onImport={handleImport}
           onClose={() => setShowImport(false)}
         />
