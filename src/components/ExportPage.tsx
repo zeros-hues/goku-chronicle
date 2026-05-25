@@ -134,7 +134,7 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
     a.download = `chronicle-export-${fmtDate(TODAY)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast(`Exported ${filtered.length} entries as CSV`);
+    showToast('Excel downloaded');
   }
 
   function downloadJSON() {
@@ -151,7 +151,7 @@ export default function ExportPage({ entries: all, showToast }: ExportPageProps)
     a.download = `chronicle-backup-${fmtDate(TODAY)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast(`Backup saved — ${filtered.length} entries`);
+    showToast('JSON downloaded');
   }
 
   return (

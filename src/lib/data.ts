@@ -16,6 +16,13 @@ export interface Project {
   name: string;
   color: string;
   billing: BillingType;
+  archived?: boolean;
+}
+
+export interface ActivityEvent {
+  id: number;
+  text: string;
+  ts: number;
 }
 
 export interface Client {

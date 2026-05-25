@@ -12,8 +12,9 @@ import SettingsPage from '@/components/SettingsPage';
 import EntryDrawer from '@/components/NewEntryDrawer';
 import ImportModal from '@/components/ImportModal';
 import ShortcutsDialog from '@/components/ShortcutsDialog';
-import { MEMBERS, TODAY, dowFull, monShort } from '@/lib/data';
-import type { View, Theme, Entry } from '@/lib/data';
+import ActivityPanel from '@/components/ActivityPanel';
+import { MEMBERS, TODAY, dowFull, monShort, PROJECT_BY_ID } from '@/lib/data';
+import type { View, Theme, Entry, ActivityEvent } from '@/lib/data';
 import * as api from '@/lib/api';
 import { IconPlus, IconImport, IconTimesheet, IconDashboard, IconCheck } from '@/components/Icons';
 
@@ -25,6 +26,7 @@ interface ToastItem {
 }
 
 let toastSeq = 0;
+let activitySeq = 0;
 
 function getTopBar(view: View): { title: string; sub: string } {
   const d = TODAY;
@@ -56,6 +58,14 @@ export default function Page() {
   const [newEntryId, setNewEntryId] = useState<number | null>(null);
   const [toasts, setToasts]         = useState<ToastItem[]>([]);
   const toastTimers                 = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const [activityLog, setActivityLog]   = useState<ActivityEvent[]>([]);
+  const [showActivity, setShowActivity] = useState(false);
+  const [activityLastViewed, setActivityLastViewed] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      return parseInt(localStorage.getItem('chronicle-activity-last-viewed') || '0', 10);
+    }
+    return 0;
+  });
   const searchRef                   = useRef<HTMLInputElement>(null);
 
   const trashCount = entries.filter(e => e.trashed).length;
@@ -84,15 +94,22 @@ export default function Page() {
     localStorage.setItem('chronicle-theme', theme);
   }, [theme]);
 
-  /* ── Toast system ──────────────────────────────────────── */
-  const showToast = useCallback((text: string, action?: { label: string; cb: () => void }) => {
+  /* ── Toast + activity system ───────────────────────────── */
+  const showToast = useCallback((
+    text: string,
+    action?: { label: string; cb: () => void },
+    duration?: number,
+  ) => {
     const id = ++toastSeq;
     setToasts(prev => [...prev.slice(-2), { id, text, action }]);
+    const ms = duration ?? (action ? 6000 : 4000);
     const timer = setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
       toastTimers.current.delete(id);
-    }, 5000);
+    }, ms);
     toastTimers.current.set(id, timer);
+    const aid = ++activitySeq;
+    setActivityLog(prev => [{ id: aid, text, ts: Date.now() }, ...prev].slice(0, 100));
   }, []);
 
   function dismissToast(id: number) {
@@ -111,7 +128,10 @@ export default function Page() {
       // Swap temp entry for the real one returned by the API
       setEntries(prev => prev.map(e => e.id === entry.id ? saved : e));
       setNewEntryId(saved.id);
-      showToast('Entry saved');
+      const proj = PROJECT_BY_ID[saved.projectId];
+      const projName = proj?.name ?? saved.projectId;
+      const taskLabel = saved.task.length > 30 ? saved.task.slice(0, 30) + '…' : saved.task;
+      showToast(`Entry saved — ${projName} · ${taskLabel}`);
       setTimeout(() => setNewEntryId(null), 3000);
     } catch {
       setEntries(prev => prev.filter(e => e.id !== entry.id));
@@ -207,6 +227,7 @@ export default function Page() {
         if (showDrawer) { handleDrawerClose(); return; }
         if (showImport) { setShowImport(false); return; }
         if (showShortcuts) { setShowShortcuts(false); return; }
+        if (showActivity) { setShowActivity(false); return; }
       }
 
       if (inInput) return;
@@ -236,7 +257,16 @@ export default function Page() {
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [view, showDrawer, showImport, showShortcuts]);
+  }, [view, showDrawer, showImport, showShortcuts, showActivity]);
+
+  function openActivity() {
+    setShowActivity(true);
+    const now = Date.now();
+    setActivityLastViewed(now);
+    localStorage.setItem('chronicle-activity-last-viewed', String(now));
+  }
+
+  const activityCount = activityLog.filter(e => e.ts > activityLastViewed).length;
 
   const { title, sub } = getTopBar(view);
   const isTimesheetOrDash = view === 'timesheet' || view === 'dashboard';
@@ -276,6 +306,8 @@ export default function Page() {
         trashCount={trashCount}
         currentUser={MEMBERS[0]}
         onSignOut={() => signOut({ callbackUrl: '/login' })}
+        activityCount={activityCount}
+        onActivityClick={openActivity}
       />
       <div className="main-area">
         <TopBar title={title} sub={sub} actions={topBarActions} />
@@ -323,6 +355,13 @@ export default function Page() {
 
       {showShortcuts && (
         <ShortcutsDialog onClose={() => setShowShortcuts(false)} />
+      )}
+
+      {showActivity && (
+        <ActivityPanel
+          events={activityLog}
+          onClose={() => setShowActivity(false)}
+        />
       )}
 
       {toasts.length > 0 && (

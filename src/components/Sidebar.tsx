@@ -5,7 +5,7 @@ import type { View, Theme, Member } from '@/lib/data';
 import {
   IconTimesheet, IconExport, IconTrash,
   IconClients, IconTeam, IconAccount,
-  IconMoon, IconSun, IconSignOut,
+  IconMoon, IconSun, IconSignOut, IconClock,
 } from './Icons';
 
 interface NavItem {
@@ -23,6 +23,8 @@ interface SidebarProps {
   trashCount: number;
   currentUser: Member;
   onSignOut: () => void;
+  activityCount: number;
+  onActivityClick: () => void;
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -39,6 +41,7 @@ const SETTINGS_ITEMS: NavItem[] = [
 
 export default function Sidebar({
   view, setView, theme, setTheme, trashCount, currentUser, onSignOut,
+  activityCount, onActivityClick,
 }: SidebarProps) {
   const router = useRouter();
   const isDark = theme === 'dark';
@@ -72,6 +75,19 @@ export default function Sidebar({
           {n.count != null && <span className="count">{n.count}</span>}
         </div>
       ))}
+
+      {/* Activity log trigger */}
+      <div
+        className="nav-item"
+        onClick={onActivityClick}
+        role="button"
+        tabIndex={0}
+        onKeyDown={e => e.key === 'Enter' && onActivityClick()}
+      >
+        <IconClock size={16} />
+        <span>Activity</span>
+        {activityCount > 0 && <span className="count">{activityCount}</span>}
+      </div>
 
       {/* Settings group */}
       <div className="nav-group-label">Settings</div>

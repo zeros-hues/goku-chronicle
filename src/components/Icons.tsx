@@ -126,3 +126,6 @@ export function IconCopy(p: IconProps) {
 export function IconArchive(p: IconProps) {
   return <Icon {...p} d="M4 7h16v3H4z M5 10v10h14V10 M10 14h4" />;
 }
+export function IconClock(p: IconProps) {
+  return <Icon {...p} d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z M12 7v5l3 3" />;
+}

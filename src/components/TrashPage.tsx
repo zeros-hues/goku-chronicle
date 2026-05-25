@@ -68,9 +68,9 @@ export default function TrashPage({ entries, onRestore, onDelete, showToast }: T
   function handleRestore(ids: Set<number>) {
     onRestore(ids);
     const count = ids.size;
-    showToast(`${count} ${count === 1 ? 'entry' : 'entries'} restored`, {
+    showToast(count === 1 ? 'Entry restored' : `${count} entries restored`, {
       label: 'Undo',
-      cb: () => { onDelete(ids); }, // re-trash to undo restore
+      cb: () => { onDelete(ids); },
     });
     if (selected.size > 0) setSelected(new Set());
   }

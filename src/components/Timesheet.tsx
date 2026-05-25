@@ -199,7 +199,7 @@ export default function Timesheet({ entries, onTrash, onRestore, onEdit, showToa
     onTrash(ids);
     const n = ids.size;
     showToast(
-      `${n === 1 ? 'Entry' : `${n} entries`} moved to trash`,
+      n === 1 ? 'Moved to trash' : `${n} entries moved to trash`,
       { label: 'Undo', cb: () => onRestore(ids) }
     );
   }

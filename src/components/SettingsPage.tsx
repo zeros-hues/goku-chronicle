@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { CLIENTS, MEMBERS } from '@/lib/data';
 import type { View, Client, Member, BillingType } from '@/lib/data';
-import { IconPlus, IconEdit, IconCheck, IconX } from './Icons';
+import { IconPlus, IconEdit, IconCheck, IconX, IconArchive } from './Icons';
 
 type Section = Extract<View, 'clients' | 'team' | 'account'>;
 
@@ -43,6 +43,19 @@ function ClientsSection({ showToast }: { showToast: (t: string) => void }) {
     showToast('Project updated');
   }
 
+  function toggleArchiveProject(clientId: string, projId: string) {
+    const proj = clients.find(c => c.id === clientId)?.projects.find(p => p.id === projId);
+    if (!proj) return;
+    const willArchive = !proj.archived;
+    setClients(prev => prev.map(c =>
+      c.id !== clientId ? c : {
+        ...c,
+        projects: c.projects.map(p => p.id !== projId ? p : { ...p, archived: !p.archived }),
+      }
+    ));
+    showToast(willArchive ? `${proj.name} archived` : `${proj.name} unarchived`);
+  }
+
   function startEditing(projId: string, name: string, billing: BillingType) {
     setEditing(projId);
     setProjName(name);
@@ -71,7 +84,7 @@ function ClientsSection({ showToast }: { showToast: (t: string) => void }) {
     ));
     setAddingTo(null);
     setNewProjName('');
-    showToast(`Project "${newProj.name}" added`);
+    showToast(`Project added — ${newProj.name}`);
   }
 
   function addClient() {
@@ -172,15 +185,29 @@ function ClientsSection({ showToast }: { showToast: (t: string) => void }) {
                 </>
               ) : (
                 <>
-                  <div className="name">
+                  <div className="name" style={{ opacity: proj.archived ? 0.45 : 1 }}>
                     <span style={{ width: 10, height: 10, borderRadius: '50%', background: proj.color, display: 'inline-block', flexShrink: 0 }} />
                     {proj.name}
+                    {proj.archived && (
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.10em', color: 'var(--ink-ghost)', marginLeft: 6 }}>archived</span>
+                    )}
                   </div>
                   <span className={`billing-badge ${proj.billing}`}>{BILLING_LABELS[proj.billing]}</span>
-                  <button className="btn btn-ghost btn-sm btn-icon"
-                    onClick={() => startEditing(proj.id, proj.name, proj.billing)}>
-                    <IconEdit size={13} />
-                  </button>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <button className="btn btn-ghost btn-sm btn-icon"
+                      onClick={() => startEditing(proj.id, proj.name, proj.billing)}
+                      title="Edit project">
+                      <IconEdit size={13} />
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-sm btn-icon"
+                      onClick={() => toggleArchiveProject(client.id, proj.id)}
+                      title={proj.archived ? 'Unarchive' : 'Archive project'}
+                      style={{ opacity: proj.archived ? 0.5 : 0.7 }}
+                    >
+                      <IconArchive size={13} />
+                    </button>
+                  </div>
                 </>
               )}
             </div>
@@ -286,7 +313,7 @@ function TeamSection({ showToast }: { showToast: (t: string) => void }) {
     setAddingNew(false);
     setNewName('');
     setNewInit('');
-    showToast(`${nm.name} added to team`);
+    showToast(`Team member added — ${nm.name}`);
   }
 
   if (members.length === 0) {
@@ -392,11 +419,12 @@ function AccountSection({ showToast }: { showToast: (t: string) => void }) {
     if (newPw && !currentPw) { setPwError('Enter your current password'); return; }
     if (newPw && currentPw !== 'chronicle2026') { setPwError('Current password is incorrect'); return; }
     if (newPw && newPw.length < 8) { setPwError('New password must be at least 8 characters'); return; }
+    const hadPasswordChange = Boolean(newPw);
     setPwError('');
     setCurrentPw('');
     setNewPw('');
     setDirty(false);
-    showToast('Settings saved');
+    showToast(hadPasswordChange ? 'Password updated' : 'Settings saved');
   }
 
   return (
