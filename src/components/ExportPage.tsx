@@ -119,7 +119,7 @@ export default function ExportPage({ entries: all, clients, members, projectById
         if (e.type === 'meeting') {
           row.push(
             e.meetingPeople ?? 0,
-            isRetainerAnon ? (e.meetingDuration ?? 0) : `${e.meetingDuration}×${e.meetingPeople}`,
+            (e.meetingDuration ?? 0),
           );
         } else {
           const vals = Object.values(e.hours).filter(v => v > 0);
@@ -337,7 +337,7 @@ export default function ExportPage({ entries: all, clients, members, projectById
                     const d = new Date(e.date + 'T00:00:00');
                     const anonCount = e.type === 'meeting' ? (e.meetingPeople ?? 0) : Object.values(e.hours).filter(v => v > 0).length;
                     const anonWorkHrs = e.type === 'meeting'
-                      ? (isRetainerAnon ? `${e.meetingDuration ?? 0}h` : `${e.meetingDuration}×${e.meetingPeople}`)
+                      ? `${e.meetingDuration ?? 0}h`
                       : Object.values(e.hours).filter(v => v > 0).join('+');
                     return (
                       <tr key={e.id} className="entry" style={{ cursor: 'default' }}>

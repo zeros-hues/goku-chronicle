@@ -436,7 +436,7 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
                                   <div className="chip-row">
                                     {e.type === 'meeting' ? (
                                       <div className="member-chip" style={{ background: 'var(--paper-deep)' }}>
-                                        <span>{e.meetingPeople} people · {e.meetingDuration}h each</span>
+                                        <span>{e.meetingPeople} people · {e.meetingDuration}h</span>
                                       </div>
                                     ) : (
                                       Object.entries(e.hours).map(([mid, h]) => {

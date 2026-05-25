@@ -115,7 +115,7 @@ export async function GET(req: NextRequest) {
             if (th) entryTotal += th.hours
           }
           if (entry.isMeeting) {
-            entryTotal = (entry.meetingDuration ?? 0) * (entry.personCount ?? 0)
+            entryTotal = (entry.meetingDuration ?? 0)
             for (const m of members) row[m.id] = ''
           }
           row['total'] = entryTotal
@@ -127,7 +127,7 @@ export async function GET(req: NextRequest) {
           if (entry.isMeeting) {
             resources = String(entry.personCount ?? '')
             workHours = String(entry.meetingDuration ?? '')
-            entryTotal = (entry.meetingDuration ?? 0) * (entry.personCount ?? 0)
+            entryTotal = (entry.meetingDuration ?? 0)
           } else {
             const hrs = entry.taskHours.filter(h => h.hours > 0)
             resources = String(hrs.length)

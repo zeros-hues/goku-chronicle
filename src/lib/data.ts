@@ -93,7 +93,7 @@ export function monShort(d: Date) { return ['Jan','Feb','Mar','Apr','May','Jun',
 export function isWeekend(d: Date) { return d.getDay() === 0 || d.getDay() === 6; }
 
 export function entryHours(e: Entry) {
-  if (e.type === 'meeting') return (e.meetingDuration ?? 0) * (e.meetingPeople ?? 0);
+  if (e.type === 'meeting') return (e.meetingDuration ?? 0);
   return Object.values(e.hours).reduce((a, b) => a + b, 0);
 }
 

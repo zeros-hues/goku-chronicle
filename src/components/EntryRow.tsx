@@ -49,7 +49,7 @@ function ExpandedDetail({ entry, members, projectById }: { entry: Entry; members
                     <span className="av" style={{ background: 'var(--ink-fade)', width: 20, height: 20, borderRadius: '50%', display: 'grid', placeItems: 'center', color: 'var(--paper)', fontSize: 10 }}>
                       <IconMeeting size={10} />
                     </span>
-                    {entry.meetingPeople} people · {entry.meetingDuration}h each
+                    {entry.meetingPeople} people · {entry.meetingDuration}h
                   </span>
                 )}
               </>

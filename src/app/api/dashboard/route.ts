@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
 
       let entryHours = 0
       if (entry.isMeeting) {
-        entryHours = (entry.meetingDuration ?? 0) * (entry.personCount ?? 0)
+        entryHours = (entry.meetingDuration ?? 0)
       } else {
         entryHours = entry.taskHours.reduce((s, h) => s + h.hours, 0)
       }

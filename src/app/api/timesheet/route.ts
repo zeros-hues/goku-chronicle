@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
     })
 
     const totalHours = entries.reduce((sum, e) => {
-      if (e.isMeeting) return sum + (e.meetingDuration ?? 0) * (e.personCount ?? 0)
+      if (e.isMeeting) return sum + (e.meetingDuration ?? 0)
       return sum + e.taskHours.reduce((s, h) => s + h.hours, 0)
     }, 0)
 

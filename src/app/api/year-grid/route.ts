@@ -22,7 +22,7 @@ export async function GET() {
       const dateStr = format(entry.date, 'yyyy-MM-dd')
       let h = 0
       if (entry.isMeeting) {
-        h = (entry.meetingDuration ?? 0) * (entry.personCount ?? 0)
+        h = (entry.meetingDuration ?? 0)
       } else {
         h = entry.taskHours.reduce((s, th) => s + th.hours, 0)
       }
