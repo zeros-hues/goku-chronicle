@@ -22,6 +22,12 @@ export async function GET(req: NextRequest) {
       ...(startDate ? { date: { gte: new Date(startDate) } } : {}),
       ...(endDate   ? { date: { lte: new Date(endDate)   } } : {}),
       ...(clientId  ? { project: { clientId } } : {}),
+      ...(billingType ? {
+        OR: [
+          { billingOverride: billingType },
+          { billingOverride: null, project: { billingType } },
+        ],
+      } : {}),
     }
 
     const entries = await prisma.taskEntry.findMany({
@@ -33,9 +39,7 @@ export async function GET(req: NextRequest) {
       },
     })
 
-    const filtered = billingType
-      ? entries.filter(e => (e.billingOverride ?? e.project?.billingType) === billingType)
-      : entries
+    const filtered = entries
 
     // Get unique active members (for named columns)
     const members = await prisma.teamMember.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } })

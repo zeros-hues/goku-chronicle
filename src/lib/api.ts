@@ -50,6 +50,7 @@ interface BackendEntry {
   personCount: number | null
   meetingDuration: number | null
   billingOverride: string | null
+  effectiveBilling: string | null
   deletedAt: string | null
   createdAt: string
   project: {
@@ -130,7 +131,7 @@ export function toFrontendMember(m: BackendMember, index: number): Member {
 }
 
 function toFrontendEntry(b: BackendEntry): Entry {
-  const billingKey = (b.billingOverride ?? b.project?.billingType ?? 'INTERNAL') as string
+  const billingKey = (b.effectiveBilling ?? b.billingOverride ?? b.project?.billingType ?? 'INTERNAL') as string
   const billing = (billingToFrontend[billingKey] ?? 'internal') as BillingType
 
   const hours: Record<string, number> = {}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, Fragment } from 'react';
 import type { Entry, Client, Member, BillingType, Project } from '@/lib/data';
 import ProjectPill from './ProjectPill';
 import { IconX, IconCheck, IconWarn } from './Icons';
@@ -49,6 +49,12 @@ function toBilling(s: string | undefined): BillingType {
   return map[s] ?? 'retainer';
 }
 
+function toBillingAPI(b: BillingType): string {
+  if (b === 'retainer') return 'RETAINERSHIP';
+  if (b === 'out') return 'OUT_OF_RETAINERSHIP';
+  return 'INTERNAL';
+}
+
 type ProjectWithMeta = Project & { clientId: string; clientName: string };
 
 function calcDisplayHours(e: AnyEntry): number {
@@ -72,13 +78,14 @@ type ImportStatus = 'idle' | 'parsing' | 'preview' | 'importing' | 'done' | 'err
 type EntryStatus  = 'new' | 'duplicate' | 'unknown';
 
 interface PreviewRow {
-  raw:          AnyEntry;
-  converted:    Entry | null;
-  status:       EntryStatus;
-  projectLabel: string;
-  clientLabel:  string;
-  taskLabel:    string;
-  displayHours: number;
+  raw:             AnyEntry;
+  converted:       Entry | null;
+  status:          EntryStatus;
+  projectLabel:    string;
+  clientLabel:     string;
+  taskLabel:       string;
+  displayHours:    number;
+  resolvedProject?: ProjectWithMeta;
 }
 
 interface ImportModalProps {
@@ -89,16 +96,174 @@ interface ImportModalProps {
   onClose: () => void;
 }
 
+/* ── Inline add-project form ─────────────────────────────────── */
+
+interface InlineAddProjectProps {
+  originalProjectName: string;
+  clientName: string;
+  allClients: Client[];
+  onResolved: (proj: ProjectWithMeta) => void;
+  onCancel: () => void;
+  onNewClientCreated: (client: Client) => void;
+}
+
+function InlineAddProject({ originalProjectName, clientName, allClients, onResolved, onCancel, onNewClientCreated }: InlineAddProjectProps) {
+  const matchedClient = allClients.find(c => c.name.toLowerCase() === clientName.toLowerCase());
+  const [formName, setFormName]           = useState(originalProjectName);
+  const [clientId, setClientId]           = useState<string>(matchedClient?.id ?? '');
+  const [billing, setBilling]             = useState<BillingType>('retainer');
+  const [newClientName, setNewClientName] = useState(clientName);
+  const [saving, setSaving]               = useState(false);
+  const [err, setErr]                     = useState('');
+
+  async function handleAdd() {
+    if (!formName.trim()) { setErr('Project name is required.'); return; }
+    if (!clientId) { setErr('Please select a client.'); return; }
+    if (clientId === 'new' && !newClientName.trim()) { setErr('Client name is required.'); return; }
+    setSaving(true);
+    setErr('');
+
+    let resolvedClientId   = clientId;
+    let resolvedClientName = allClients.find(c => c.id === clientId)?.name ?? '';
+
+    if (clientId === 'new') {
+      try {
+        const res = await fetch('/api/settings/clients', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newClientName.trim(), hasRetainership: billing === 'retainer' }),
+        });
+        if (!res.ok) throw new Error('Failed to create client');
+        const raw = await res.json();
+        const newClient: Client = { ...raw, projects: raw.projects ?? [] };
+        onNewClientCreated(newClient);
+        resolvedClientId   = newClient.id;
+        resolvedClientName = newClient.name;
+      } catch {
+        setErr('Failed to create client. Try again.');
+        setSaving(false);
+        return;
+      }
+    }
+
+    try {
+      const res = await fetch('/api/settings/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: formName.trim(), clientId: resolvedClientId, billingType: toBillingAPI(billing) }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to create project');
+      }
+      const created = await res.json();
+      onResolved({
+        id:         created.id,
+        name:       created.name,
+        color:      created.color ?? 'oklch(0.65 0.13 200)',
+        billing:    toBilling(created.billing),
+        archivedAt: null,
+        clientId:   resolvedClientId,
+        clientName: resolvedClientName,
+      });
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Failed to create project');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <tr>
+      <td colSpan={6} style={{ padding: '12px 16px 14px', background: 'var(--paper-raised, color-mix(in oklch, var(--paper) 85%, var(--ink) 3%))' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-fade)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+            Add project to resolve
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-fade)', textTransform: 'uppercase' }}>Project name</label>
+              <input
+                className="input"
+                value={formName}
+                onChange={e => setFormName(e.target.value)}
+                style={{ width: 180 }}
+                disabled={saving}
+                autoFocus
+              />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-fade)', textTransform: 'uppercase' }}>Client</label>
+              <select
+                className="input"
+                value={clientId}
+                onChange={e => setClientId(e.target.value)}
+                style={{ width: 160 }}
+                disabled={saving}
+              >
+                <option value="">— Select client —</option>
+                {allClients.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+                <option value="new">+ New client</option>
+              </select>
+            </div>
+            {clientId === 'new' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-fade)', textTransform: 'uppercase' }}>New client name</label>
+                <input
+                  className="input"
+                  value={newClientName}
+                  onChange={e => setNewClientName(e.target.value)}
+                  placeholder="Client name"
+                  style={{ width: 160 }}
+                  disabled={saving}
+                />
+              </div>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-fade)', textTransform: 'uppercase' }}>Billing</label>
+              <div className="seg" style={{ height: 32, display: 'flex' }}>
+                {(['retainer', 'out', 'internal'] as BillingType[]).map(b => (
+                  <button key={b} type="button" className={`seg-btn${billing === b ? ' active' : ''}`}
+                    onClick={() => setBilling(b)} disabled={saving}>
+                    {b === 'retainer' ? 'Retainer' : b === 'out' ? 'Out' : 'Internal'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <button className="btn btn-primary btn-sm" onClick={handleAdd} disabled={saving}>
+                {saving ? 'Adding…' : 'Add & resolve'}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={onCancel} disabled={saving}>
+                Cancel
+              </button>
+            </div>
+          </div>
+          {err && (
+            <div style={{ fontSize: 12, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <IconWarn size={12} /> {err}
+            </div>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+/* ── ImportModal ─────────────────────────────────────────────── */
+
 export default function ImportModal({ existingEntries, clients, members, onImport, onClose }: ImportModalProps) {
-  const [status,    setStatus]   = useState<ImportStatus>('idle');
-  const [isDragOver, setDrag]    = useState(false);
-  const [rows,      setRows]     = useState<PreviewRow[]>([]);
-  const [selected,  setSelected] = useState<Set<number>>(new Set());
-  const [errorMsg,  setError]    = useState('');
-  const [apiErrors, setApiErrors] = useState<string[]>([]);
+  const [status,       setStatus]       = useState<ImportStatus>('idle');
+  const [isDragOver,   setDrag]         = useState(false);
+  const [rows,         setRows]         = useState<PreviewRow[]>([]);
+  const [selected,     setSelected]     = useState<Set<number>>(new Set());
+  const [errorMsg,     setError]        = useState('');
+  const [apiErrors,    setApiErrors]    = useState<string[]>([]);
+  const [resolveOpen,  setResolveOpen]  = useState<Set<number>>(new Set());
+  const [extraClients, setExtraClients] = useState<Client[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // Build lookup maps from fetched data
   const { allProjects, projectById, initToMemberId } = useMemo(() => {
     const allProjects = clients.flatMap(c => c.projects.map(p => ({ ...p, clientId: c.id, clientName: c.name })));
     const projectById = Object.fromEntries(allProjects.map(p => [p.id, p]));
@@ -106,6 +271,8 @@ export default function ImportModal({ existingEntries, clients, members, onImpor
     for (const m of members) initToMemberId[m.init.toLowerCase()] = m.id;
     return { allProjects, projectById, initToMemberId };
   }, [clients, members]);
+
+  const allClientsForForm = useMemo(() => [...clients, ...extraClients], [clients, extraClients]);
 
   function resolveProject(projectName: string, clientName: string): ProjectWithMeta | undefined {
     return allProjects.find(
@@ -187,7 +354,6 @@ export default function ImportModal({ existingEntries, clients, members, onImpor
             }
 
             const status: EntryStatus = isDuplicate(converted, existingEntries) ? 'duplicate' : 'new';
-
             return {
               raw, converted,
               status,
@@ -198,11 +364,9 @@ export default function ImportModal({ existingEntries, clients, members, onImpor
             };
           }
 
-          // Internal entry format
           const ie = raw as Entry;
           const proj = projectById[ie.projectId];
           const status: EntryStatus = isDuplicate(ie, existingEntries) ? 'duplicate' : 'new';
-
           return {
             raw: ie, converted: ie,
             status,
@@ -213,9 +377,7 @@ export default function ImportModal({ existingEntries, clients, members, onImpor
           };
         });
 
-        const newIdxs = new Set(
-          preview.map((_, i) => i).filter(i => preview[i].status === 'new')
-        );
+        const newIdxs = new Set(preview.map((_, i) => i).filter(i => preview[i].status === 'new'));
         setRows(preview);
         setSelected(newIdxs);
         setStatus('preview');
@@ -244,21 +406,72 @@ export default function ImportModal({ existingEntries, clients, members, onImpor
     });
   }
 
+  /* ── Inline project resolution ───────────────────────────── */
+
+  function handleProjectResolved(rowIdx: number, originalName: string, proj: ProjectWithMeta) {
+    // Compute indices to auto-select from current rows before any state updates
+    const toAutoSelect = rows
+      .map((r, i) => ({ r, i }))
+      .filter(({ r }) => {
+        if (r.status !== 'unknown' || !isExternal(r.raw)) return false;
+        const raw = r.raw as ExternalEntry;
+        return (raw.projectName || raw.project || '').trim().toLowerCase() === originalName.toLowerCase();
+      })
+      .map(({ i }) => i);
+
+    setRows(prev => prev.map((row, i) => {
+      if (row.status !== 'unknown' || !isExternal(row.raw)) return row;
+      const raw = row.raw as ExternalEntry;
+      const rowProjName = (raw.projectName || raw.project || '').trim();
+      if (rowProjName.toLowerCase() !== originalName.toLowerCase()) return row;
+
+      const task = (raw.taskDescription || raw.task || 'Untitled').trim();
+      const hours: Record<string, number> = {};
+      if (!raw.isMeeting && raw.hours) {
+        for (const h of raw.hours) {
+          const initials = (h.initials || h.member || '').trim();
+          const id = initToMemberId[initials.toLowerCase()];
+          if (id && Number(h.hours) > 0) hours[id] = Number(h.hours);
+        }
+      }
+      const converted: Entry = {
+        id:              Date.now() + i,
+        date:            raw.date,
+        projectId:       proj.id,
+        type:            raw.isMeeting ? 'meeting' : 'task',
+        task,
+        billing:         toBilling(raw.billingType ?? proj.billing),
+        hours,
+        meetingDuration: raw.isMeeting ? (raw.meetingDuration ?? 1) : undefined,
+        meetingPeople:   raw.isMeeting ? (raw.personCount ?? 2) : undefined,
+        createdAt:       Date.now(),
+        trashed:         false,
+      };
+      const newStatus: EntryStatus = isDuplicate(converted, existingEntries) ? 'duplicate' : 'new';
+      return { ...row, status: newStatus, converted, projectLabel: proj.name, clientLabel: proj.clientName, resolvedProject: proj };
+    }));
+
+    setSelected(prev => {
+      const next = new Set(prev);
+      for (const i of toAutoSelect) next.add(i);
+      return next;
+    });
+
+    setResolveOpen(prev => { const n = new Set(prev); n.delete(rowIdx); return n; });
+  }
+
   /* ── Confirm ─────────────────────────────────────────────── */
 
   async function handleConfirm() {
     setStatus('importing');
-
     const toImport: Entry[] = Array.from(selected)
       .map(i => rows[i].converted)
       .filter((e): e is Entry => e !== null);
-
     try {
       await onImport(toImport);
     } catch {
       setApiErrors(['Could not save to database. Entries shown but may not persist after refresh.']);
     }
-
     setStatus('done');
   }
 
@@ -395,88 +608,107 @@ export default function ImportModal({ existingEntries, clients, members, onImpor
                       <th style={{ width: 180 }}>Project</th>
                       <th>Task</th>
                       <th className="num" style={{ width: 60 }}>Hours</th>
-                      <th style={{ width: 90 }}>Status</th>
+                      <th style={{ width: 120 }}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rows.map((row, i) => {
                       const isSel     = selected.has(i);
                       const isUnknown = row.status === 'unknown';
-                      const proj      = row.converted ? (projectById[row.converted.projectId] as ProjectWithMeta | undefined) : null;
+                      const isOpen    = resolveOpen.has(i);
+                      const proj      = row.resolvedProject
+                        ?? (row.converted ? (projectById[row.converted.projectId] as ProjectWithMeta | undefined) : null);
                       const h         = row.displayHours;
                       const isMtg     = isExternal(row.raw)
                         ? (row.raw as ExternalEntry).isMeeting
                         : (row.raw as Entry).type === 'meeting';
 
                       return (
-                        <tr
-                          key={i}
-                          className="entry"
-                          onClick={() => toggleRow(i)}
-                          style={{
-                            opacity: (row.status === 'duplicate' || isUnknown) ? 0.5 : 1,
-                            cursor: isUnknown ? 'not-allowed' : 'pointer',
-                          }}
-                        >
-                          <td>
-                            {!isUnknown && <div className={`row-checkbox${isSel ? ' checked' : ''}`} />}
-                          </td>
-                          <td className="mono" style={{ fontSize: 12, color: 'var(--ink-fade)' }}>
-                            {row.raw.date}
-                          </td>
-                          <td>
-                            {proj ? (
-                              <ProjectPill project={proj} clientName={proj.clientName} />
-                            ) : (
-                              <span style={{
-                                fontFamily: 'var(--font-mono)',
-                                fontSize: 11,
-                                color: isUnknown ? 'var(--warning-text, #92400e)' : 'var(--ink-ghost)',
-                              }}>
-                                {row.clientLabel ? `${row.clientLabel} · ` : ''}
-                                {row.projectLabel}
-                                {isUnknown && ' ⚠'}
-                              </span>
-                            )}
-                          </td>
-                          <td className="task-cell" style={{ fontSize: 12.5 }}>
-                            {isMtg && <span className="meet">Meeting</span>}
-                            {row.taskLabel}
-                          </td>
-                          <td className="hrs">
-                            <span className="v">{h % 1 === 0 ? h : h.toFixed(1)}</span>
-                            <span className="u">h</span>
-                          </td>
-                          <td>
-                            {isUnknown ? (
-                              <span className="status-tag" style={{
-                                background: 'var(--warning-bg, #fef3c7)',
-                                color: 'var(--warning-text, #92400e)',
-                                padding: '2px 8px',
-                                borderRadius: 4,
-                                fontSize: 11,
-                                fontFamily: 'var(--font-mono)',
-                              }}>
-                                Unknown
-                              </span>
-                            ) : (
-                              <span className={`status-tag ${row.status}`}>
-                                {row.status === 'new' ? 'New' : 'Duplicate'}
-                              </span>
-                            )}
-                          </td>
-                        </tr>
+                        <Fragment key={i}>
+                          <tr
+                            className="entry"
+                            onClick={() => toggleRow(i)}
+                            style={{
+                              opacity: (row.status === 'duplicate' || isUnknown) ? 0.6 : 1,
+                              cursor: isUnknown ? 'default' : 'pointer',
+                              background: isOpen ? 'var(--paper-raised, color-mix(in oklch, var(--paper) 85%, var(--ink) 3%))' : undefined,
+                            }}
+                          >
+                            <td>
+                              {!isUnknown && <div className={`row-checkbox${isSel ? ' checked' : ''}`} />}
+                            </td>
+                            <td className="mono" style={{ fontSize: 12, color: 'var(--ink-fade)' }}>
+                              {row.raw.date}
+                            </td>
+                            <td>
+                              {proj ? (
+                                <ProjectPill project={proj} clientName={proj.clientName} />
+                              ) : (
+                                <span style={{
+                                  fontFamily: 'var(--font-mono)',
+                                  fontSize: 11,
+                                  color: isUnknown ? 'var(--warning-text, #92400e)' : 'var(--ink-ghost)',
+                                }}>
+                                  {row.clientLabel ? `${row.clientLabel} · ` : ''}
+                                  {row.projectLabel}
+                                </span>
+                              )}
+                            </td>
+                            <td className="task-cell" style={{ fontSize: 12.5 }}>
+                              {isMtg && <span className="meet">Meeting</span>}
+                              {row.taskLabel}
+                            </td>
+                            <td className="hrs">
+                              <span className="v">{h % 1 === 0 ? h : h.toFixed(1)}</span>
+                              <span className="u">h</span>
+                            </td>
+                            <td>
+                              {isUnknown ? (
+                                isOpen ? (
+                                  <span className="status-tag" style={{
+                                    background: 'var(--warning-bg, #fef3c7)',
+                                    color: 'var(--warning-text, #92400e)',
+                                    padding: '2px 8px',
+                                    borderRadius: 4,
+                                    fontSize: 11,
+                                    fontFamily: 'var(--font-mono)',
+                                  }}>
+                                    Unknown
+                                  </span>
+                                ) : (
+                                  <button
+                                    className="btn btn-ghost btn-sm"
+                                    style={{ fontSize: 11, color: 'var(--warning-text, #d97706)', whiteSpace: 'nowrap' }}
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      setResolveOpen(prev => { const n = new Set(prev); n.add(i); return n; });
+                                    }}
+                                  >
+                                    ⚠ Add project
+                                  </button>
+                                )
+                              ) : (
+                                <span className={`status-tag ${row.status}`}>
+                                  {row.status === 'new' ? 'New' : 'Duplicate'}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                          {isUnknown && isOpen && (
+                            <InlineAddProject
+                              originalProjectName={row.projectLabel}
+                              clientName={row.clientLabel}
+                              allClients={allClientsForForm}
+                              onResolved={proj => handleProjectResolved(i, row.projectLabel, proj)}
+                              onCancel={() => setResolveOpen(prev => { const n = new Set(prev); n.delete(i); return n; })}
+                              onNewClientCreated={c => setExtraClients(prev => [...prev, c])}
+                            />
+                          )}
+                        </Fragment>
                       );
                     })}
                   </tbody>
                 </table>
-              )}
-
-              {unknownCount > 0 && (
-                <p style={{ marginTop: 12, fontSize: 12, color: 'var(--ink-fade)', fontFamily: 'var(--font-mono)' }}>
-                  ⚠ Unknown project rows cannot be imported.
-                  Add the project in Settings → Clients &amp; Projects first.
-                </p>
               )}
             </>
           )}
@@ -487,7 +719,7 @@ export default function ImportModal({ existingEntries, clients, members, onImpor
         <div className="modal-footer">
           {status === 'preview' && (
             <>
-              <button className="btn btn-ghost" onClick={() => { setStatus('idle'); setRows([]); setSelected(new Set()); }}>
+              <button className="btn btn-ghost" onClick={() => { setStatus('idle'); setRows([]); setSelected(new Set()); setResolveOpen(new Set()); }}>
                 Back
               </button>
               <button className="btn btn-ghost" onClick={onClose}>Cancel</button>

@@ -61,7 +61,12 @@ export async function GET(req: NextRequest) {
       return sum + e.taskHours.reduce((s, h) => s + h.hours, 0)
     }, 0)
 
-    return NextResponse.json({ entries, totalHours, count: entries.length })
+    const formatted = entries.map(e => ({
+      ...e,
+      effectiveBilling: e.billingOverride ?? e.project?.billingType ?? null,
+    }))
+
+    return NextResponse.json({ entries: formatted, totalHours, count: formatted.length })
   } catch (e) {
     console.error(e)
     return NextResponse.json({ error: 'Failed to fetch entries' }, { status: 500 })

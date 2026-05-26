@@ -129,15 +129,6 @@ export async function POST(req: NextRequest) {
         })
         .filter((h): h is { teamMemberId: string; hours: number } => h !== null)
 
-      // Validate and apply billingType override
-      const validBilling = ['RETAINERSHIP', 'OUT_OF_RETAINERSHIP', 'INTERNAL'] as const
-      type ValidBilling = typeof validBilling[number]
-
-      const billingOverride: ValidBilling | undefined =
-        entry.billingType && (validBilling as readonly string[]).includes(entry.billingType)
-          ? (entry.billingType as ValidBilling)
-          : undefined
-
       await prisma.taskEntry.create({
         data: {
           date:            entryDate,
@@ -146,9 +137,9 @@ export async function POST(req: NextRequest) {
           isMeeting:       entry.isMeeting       ?? false,
           personCount:     entry.personCount      ?? null,
           meetingDuration: entry.meetingDuration  ?? null,
-          billingOverride,
           source:          'MANUAL',
           taskHours:       { create: taskHours },
+          // billingOverride intentionally omitted — inherits from project
         },
       })
 
