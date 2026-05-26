@@ -151,7 +151,16 @@ export default function Dashboard({ entries, members, projectById, holidays, hou
     }
   });
   const dayEntries = Object.entries(dayMap).sort(([a], [b]) => a.localeCompare(b));
-  const maxDay = Math.max(1, ...Object.values(dayMap).map(d => d.total));
+
+  // Trim future empty days so the chart doesn't show dead space to the right
+  const chartDays = dayEntries.filter(([d]) => new Date(d + 'T00:00:00') <= today);
+  const nChart = chartDays.length;
+  const maxDay = Math.max(1, ...chartDays.map(([, v]) => v.total));
+
+  // Adaptive column sizing: narrow fixed-width columns for long ranges (scroll if needed),
+  // flex for short ranges (fills full card width)
+  const colW   = nChart > 62 ? 5 : nChart > 31 ? 8 : undefined;
+  const gapPx  = nChart > 62 ? 1 : nChart > 31 ? 2 : 3;
 
   // Goal + below-target
   const workingDays = dayEntries.filter(([d]) => {
@@ -331,25 +340,32 @@ export default function Dashboard({ entries, members, projectById, holidays, hou
       <div className="card">
         <div className="card-h">
           <h3>Daily hours</h3>
-          <span className="sub">stacked by person · {dayEntries.length} days</span>
+          <span className="sub">stacked by person · {nChart} days</span>
         </div>
-        <div className="stacked-chart">
-          {dayEntries.map(([d, v]) => {
-            const dt = new Date(d + 'T00:00:00');
-            const isWE = isWeekend(dt);
-            const isHol = !!holidays[d];
-            return (
-              <div key={d} className={['col', isWE ? 'weekend' : '', isHol ? 'holiday' : ''].filter(Boolean).join(' ')} title={`${d} · ${v.total.toFixed(1)}h${isHol ? ' · ' + holidays[d] : ''}`}>
-                {Object.entries(v.members).map(([mid, h]) => {
-                  const mem = members.find(x => x.id === mid);
-                  const color = mid === '__meet' ? 'var(--ink-ghost)' : mem ? mem.color : 'var(--ink-ghost)';
-                  return <div key={mid} className="seg" style={{ height: (h / maxDay) * 200, background: color }} />;
-                })}
-                {dt.getDate() === 1 && <div className="lbl" style={{ fontWeight: 600, color: 'var(--ink-soft)' }}>{monShort(dt)}</div>}
-                {[1, 8, 15, 22, 29].includes(dt.getDate()) && dt.getDate() !== 1 && <div className="lbl">{dt.getDate()}</div>}
-              </div>
-            );
-          })}
+        <div className="stacked-wrap">
+          <div className="stacked-chart" style={{ gap: gapPx }}>
+            {chartDays.map(([d, v]) => {
+              const dt = new Date(d + 'T00:00:00');
+              const isWE = isWeekend(dt);
+              const isHol = !!holidays[d];
+              return (
+                <div
+                  key={d}
+                  className={['col', isWE ? 'weekend' : '', isHol ? 'holiday' : ''].filter(Boolean).join(' ')}
+                  title={`${d} · ${v.total.toFixed(1)}h${isHol ? ' · ' + holidays[d] : ''}`}
+                  style={colW ? { flex: 'none', width: colW } : undefined}
+                >
+                  {Object.entries(v.members).map(([mid, h]) => {
+                    const mem = members.find(x => x.id === mid);
+                    const color = mid === '__meet' ? 'var(--ink-ghost)' : mem ? mem.color : 'var(--ink-ghost)';
+                    return <div key={mid} className="seg" style={{ height: (h / maxDay) * 200, background: color }} />;
+                  })}
+                  {dt.getDate() === 1 && <div className="lbl" style={{ fontWeight: 600, color: 'var(--ink-soft)' }}>{monShort(dt)}</div>}
+                  {[1, 8, 15, 22, 29].includes(dt.getDate()) && dt.getDate() !== 1 && <div className="lbl">{dt.getDate()}</div>}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
