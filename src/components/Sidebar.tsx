@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
+import { gsap } from 'gsap';
 import { useRouter } from 'next/navigation';
 import type { View, Theme, Member } from '@/lib/data';
 import {
@@ -45,13 +47,25 @@ export default function Sidebar({
 }: SidebarProps) {
   const router = useRouter();
   const isDark = theme === 'dark';
+  const sidebarRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!sidebarRef.current) return;
+    const ctx = gsap.context(() => {
+      gsap.fromTo('.nav-item',
+        { opacity: 0, x: -8 },
+        { opacity: 1, x: 0, duration: 0.25, ease: 'power2.out', stagger: 0.04, clearProps: 'x,opacity' },
+      );
+    }, sidebarRef);
+    return () => ctx.revert();
+  }, []);
 
   const navItems: NavItem[] = NAV_ITEMS.map(n =>
     n.id === 'trash' ? { ...n, count: trashCount || null } : n
   );
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" ref={sidebarRef}>
       {/* Brand */}
       <div className="sidebar-brand">
         <div className="mark">

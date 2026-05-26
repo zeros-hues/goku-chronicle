@@ -13,6 +13,8 @@ import EntryDrawer from '@/components/NewEntryDrawer';
 import ImportModal from '@/components/ImportModal';
 import ShortcutsDialog from '@/components/ShortcutsDialog';
 import ActivityPanel from '@/components/ActivityPanel';
+import PageTransition from '@/components/PageTransition';
+import { TimesheetSkeleton, DashboardSkeleton, SettingsSkeleton } from '@/components/Skeletons';
 import { dowFull, monShort } from '@/lib/data';
 import type { View, Theme, Entry, Client, Member, ActivityEvent } from '@/lib/data';
 import * as api from '@/lib/api';
@@ -358,9 +360,9 @@ export default function Page() {
         <TopBar title={title} sub={sub} actions={topBarActions} />
 
         {loading ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: 'var(--ink-fade)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
-            Loading…
-          </div>
+          view === 'dashboard' ? <DashboardSkeleton /> :
+          (view === 'clients' || view === 'team' || view === 'account') ? <SettingsSkeleton /> :
+          <TimesheetSkeleton />
         ) : dataError ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: 16 }}>
             <p style={{ color: 'var(--ink-fade)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
@@ -369,52 +371,62 @@ export default function Page() {
             <button className="btn" onClick={loadAll}>Retry</button>
           </div>
         ) : view === 'timesheet' ? (
-          <Timesheet
-            entries={entries}
-            clients={clients}
-            members={activeMembers}
-            projectById={projectById}
-            onTrash={handleTrash}
-            onRestore={handleRestore}
-            onEdit={handleEdit}
-            showToast={showToast}
-            newEntryId={newEntryId}
-            searchRef={searchRef}
-          />
+          <PageTransition key="timesheet">
+            <Timesheet
+              entries={entries}
+              clients={clients}
+              members={activeMembers}
+              projectById={projectById}
+              onTrash={handleTrash}
+              onRestore={handleRestore}
+              onEdit={handleEdit}
+              showToast={showToast}
+              newEntryId={newEntryId}
+              searchRef={searchRef}
+            />
+          </PageTransition>
         ) : view === 'dashboard' ? (
-          <Dashboard
-            entries={entries}
-            members={activeMembers}
-            projectById={projectById}
-            holidays={holidays}
-            hoursTarget={hoursTarget}
-          />
+          <PageTransition key="dashboard">
+            <Dashboard
+              entries={entries}
+              members={activeMembers}
+              projectById={projectById}
+              holidays={holidays}
+              hoursTarget={hoursTarget}
+            />
+          </PageTransition>
         ) : view === 'export' ? (
-          <ExportPage
-            entries={entries}
-            clients={clients}
-            members={activeMembers}
-            projectById={projectById}
-            showToast={showToast}
-          />
+          <PageTransition key="export">
+            <ExportPage
+              entries={entries}
+              clients={clients}
+              members={activeMembers}
+              projectById={projectById}
+              showToast={showToast}
+            />
+          </PageTransition>
         ) : view === 'trash' ? (
-          <TrashPage
-            entries={entries}
-            members={activeMembers}
-            projectById={projectById}
-            onRestore={handleRestore}
-            onDelete={handleDelete}
-            showToast={showToast}
-          />
+          <PageTransition key="trash">
+            <TrashPage
+              entries={entries}
+              members={activeMembers}
+              projectById={projectById}
+              onRestore={handleRestore}
+              onDelete={handleDelete}
+              showToast={showToast}
+            />
+          </PageTransition>
         ) : (view === 'clients' || view === 'team' || view === 'account') ? (
-          <SettingsPage
-            section={view}
-            onNavigate={setView}
-            showToast={showToast}
-            onClientsChange={setClients}
-            onMembersChange={setMembers}
-            onHolidaysChange={setHolidays}
-          />
+          <PageTransition key={view}>
+            <SettingsPage
+              section={view}
+              onNavigate={setView}
+              showToast={showToast}
+              onClientsChange={setClients}
+              onMembersChange={setMembers}
+              onHolidaysChange={setHolidays}
+            />
+          </PageTransition>
         ) : null}
       </div>
 

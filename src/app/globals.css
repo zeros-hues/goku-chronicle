@@ -1128,6 +1128,82 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .dash-empty h3 { font-family: var(--font-serif); font-weight: 400; font-size: 22px; color: var(--ink); margin: 0 0 6px; }
 .dash-empty p { color: var(--ink-fade); max-width: 340px; line-height: 1.5; margin: 0 0 18px; }
 
+/* ── Shimmer skeleton ────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg,
+    var(--paper-tint) 25%,
+    var(--paper-deep) 50%,
+    var(--paper-tint) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--radius);
+}
+
+/* ── Focus visible ───────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+button:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+
+/* ── Cursor states ───────────────────────────────────────── */
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+.cursor-wait, .cursor-wait * { cursor: wait !important; }
+body.global-loading { cursor: wait; }
+
+/* ── Input focus enhancement ─────────────────────────────── */
+.field-input:focus, input:focus, textarea:focus, select:focus {
+  border-color: var(--ink) !important;
+  box-shadow: 0 0 0 3px oklch(from var(--ink) l c h / 0.07);
+}
+
+/* ── Import progress (dot grid) ──────────────────────────── */
+.import-progress {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 22px; padding: 28px 16px 16px;
+}
+.ip-grid { margin: 0 auto; }
+.ip-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  border: 1.5px dashed var(--paper-rule); background: transparent;
+  transform-origin: center; transition: border-color 0.1s ease;
+}
+.ip-dot.filled { background: var(--ink); border-color: var(--ink); border-style: solid; }
+.ip-dot.inactive { opacity: 0.18; }
+.ip-counter {
+  font-family: var(--font-mono); font-size: 12px;
+  color: var(--ink-fade); text-align: center; min-height: 18px;
+}
+.ip-done { display: inline-flex; align-items: center; gap: 6px; color: var(--ok); font-weight: 500; }
+.ip-ticker {
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-ghost);
+  max-width: 320px; width: 100%; text-align: center;
+  overflow: hidden; height: 17px; position: relative;
+}
+.ip-ticker span {
+  display: block; position: absolute; width: 100%; left: 0;
+  animation: ip-slide-up 0.22s cubic-bezier(.2,.8,.2,1) both;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+@keyframes ip-slide-up {
+  from { transform: translateY(100%); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* ── Page transition wrapper ─────────────────────────────── */
+.page-transition { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
 /* ── Reduced motion ──────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

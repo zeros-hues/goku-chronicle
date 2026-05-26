@@ -3,6 +3,7 @@
 import { useState, useRef, useMemo, Fragment } from 'react';
 import type { Entry, Client, Member, BillingType, Project } from '@/lib/data';
 import ProjectPill from './ProjectPill';
+import ImportProgress from './ImportProgress';
 import { IconX, IconCheck, IconWarn } from './Icons';
 
 /* ── External JSON format ────────────────────────────────────── */
@@ -254,14 +255,15 @@ function InlineAddProject({ originalProjectName, clientName, allClients, onResol
 /* ── ImportModal ─────────────────────────────────────────────── */
 
 export default function ImportModal({ existingEntries, clients, members, onImport, onClose }: ImportModalProps) {
-  const [status,       setStatus]       = useState<ImportStatus>('idle');
-  const [isDragOver,   setDrag]         = useState(false);
-  const [rows,         setRows]         = useState<PreviewRow[]>([]);
-  const [selected,     setSelected]     = useState<Set<number>>(new Set());
-  const [errorMsg,     setError]        = useState('');
-  const [apiErrors,    setApiErrors]    = useState<string[]>([]);
-  const [resolveOpen,  setResolveOpen]  = useState<Set<number>>(new Set());
-  const [extraClients, setExtraClients] = useState<Client[]>([]);
+  const [status,            setStatus]           = useState<ImportStatus>('idle');
+  const [isDragOver,        setDrag]             = useState(false);
+  const [rows,              setRows]             = useState<PreviewRow[]>([]);
+  const [selected,          setSelected]         = useState<Set<number>>(new Set());
+  const [errorMsg,          setError]            = useState('');
+  const [apiErrors,         setApiErrors]        = useState<string[]>([]);
+  const [resolveOpen,       setResolveOpen]      = useState<Set<number>>(new Set());
+  const [extraClients,      setExtraClients]     = useState<Client[]>([]);
+  const [importingEntries,  setImportingEntries] = useState<Entry[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const { allProjects, projectById, initToMemberId } = useMemo(() => {
@@ -463,10 +465,11 @@ export default function ImportModal({ existingEntries, clients, members, onImpor
   /* ── Confirm ─────────────────────────────────────────────── */
 
   async function handleConfirm() {
-    setStatus('importing');
     const toImport: Entry[] = Array.from(selected)
       .map(i => rows[i].converted)
       .filter((e): e is Entry => e !== null);
+    setImportingEntries(toImport);
+    setStatus('importing');
     try {
       await onImport(toImport);
     } catch {
@@ -542,11 +545,14 @@ export default function ImportModal({ existingEntries, clients, members, onImpor
             </>
           )}
 
-          {/* Parsing / Importing */}
-          {(status === 'parsing' || status === 'importing') && (
-            <div className="import-loading">
-              {status === 'parsing' ? 'Parsing file…' : 'Importing entries…'}
-            </div>
+          {/* Parsing */}
+          {status === 'parsing' && (
+            <div className="import-loading">Parsing file…</div>
+          )}
+
+          {/* Importing */}
+          {status === 'importing' && (
+            <ImportProgress entries={importingEntries} />
           )}
 
           {/* Done */}

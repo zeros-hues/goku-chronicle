@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { gsap } from 'gsap';
 import { entryHours, isWeekend, fmtDate, monShort, dowShort, pad } from '@/lib/data';
 import type { Entry, Member, Project } from '@/lib/data';
 import { IconPrint } from './Icons';
@@ -82,6 +83,18 @@ export default function Dashboard({ entries, members, projectById, holidays, hou
   const today = useMemo(() => new Date(), []);
   const DAILY_TARGET = hoursTarget;
   const [range, setRange] = useState<RangeId>('this-month');
+  const metricGridRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!metricGridRef.current) return;
+    const ctx = gsap.context(() => {
+      gsap.fromTo('.metric',
+        { opacity: 0, y: 10 },
+        { opacity: 1, y: 0, duration: 0.3, ease: 'power2.out', stagger: 0.06, clearProps: 'y,opacity' },
+      );
+    }, metricGridRef);
+    return () => ctx.revert();
+  }, []);
 
   const [rangeStart, rangeEnd] = useMemo(() => {
     const t = new Date(today);
@@ -242,7 +255,7 @@ export default function Dashboard({ entries, members, projectById, holidays, hou
       </div>
 
       {/* Metrics */}
-      <div className="metric-grid">
+      <div className="metric-grid" ref={metricGridRef}>
         <Metric label="Total hours" value={totalHours} accent />
         <Metric
           label="Retainership"

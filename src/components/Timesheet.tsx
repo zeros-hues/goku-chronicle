@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { gsap } from 'gsap';
 import {
   fmtDate, entryHours, entryMemberHours,
   dowFull, dowShort, monShort, pad,
@@ -113,6 +114,8 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
   const [highlightId, setHighlightId] = useState<number | null>(null);
   const internalSearchRef = useRef<HTMLInputElement>(null);
   const searchInputRef = searchRef ?? internalSearchRef;
+  const tbodyRef       = useRef<HTMLTableSectionElement>(null);
+  const hasAnimatedRef = useRef(false);
 
   const [rangeStart, rangeEnd] = useMemo(() => {
     const t = new Date(today);
@@ -169,6 +172,17 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
   }, [filtered, sortBy, projectById]);
 
   const totalInView = filtered.reduce((s, e) => s + entryHours(e), 0);
+
+  useEffect(() => {
+    if (hasAnimatedRef.current || grouped.length === 0 || !tbodyRef.current) return;
+    hasAnimatedRef.current = true;
+    const rows = tbodyRef.current.querySelectorAll('tr.entry');
+    if (rows.length === 0) return;
+    gsap.fromTo(rows,
+      { opacity: 0, y: 6 },
+      { opacity: 1, y: 0, duration: 0.22, ease: 'power2.out', stagger: 0.025, clearProps: 'y,opacity' },
+    );
+  }, [grouped]);
 
   useEffect(() => {
     if (!newEntryId) return;
@@ -337,7 +351,7 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
                 </th>
               </tr>
             </thead>
-            <tbody>
+            <tbody ref={tbodyRef}>
               {grouped.map(({ date, entries: dayEntries }) => {
                 const d = new Date(date + 'T00:00:00');
                 const isToday = date === TODAY_STR;

@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
+import { gsap } from 'gsap';
 import type { ActivityEvent } from '@/lib/data';
 import { IconX } from './Icons';
 
@@ -20,6 +22,19 @@ interface ActivityPanelProps {
 }
 
 export default function ActivityPanel({ events, onClose }: ActivityPanelProps) {
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!listRef.current || events.length === 0) return;
+    const ctx = gsap.context(() => {
+      gsap.fromTo('.activity-item',
+        { opacity: 0, x: 12 },
+        { opacity: 1, x: 0, duration: 0.22, ease: 'power2.out', stagger: 0.05, clearProps: 'x,opacity' },
+      );
+    }, listRef);
+    return () => ctx.revert();
+  }, [events.length]);
+
   return (
     <div className="activity-panel">
       <div className="activity-panel-header">
@@ -28,7 +43,7 @@ export default function ActivityPanel({ events, onClose }: ActivityPanelProps) {
           <IconX size={14} />
         </button>
       </div>
-      <div className="activity-panel-body">
+      <div className="activity-panel-body" ref={listRef}>
         {events.length === 0 ? (
           <div className="activity-empty">
             <span className="icon">◎</span>
