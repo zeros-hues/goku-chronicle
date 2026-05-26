@@ -453,11 +453,11 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .dropdown-item.selected::after { content: ""; width: 6px; height: 6px; background: var(--accent); border-radius: 50%; margin-left: auto; }
 .dropdown-section { padding: 6px 10px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-fade); font-family: var(--font-mono); }
 
-.ts-scroll { flex: 1; padding: 0 32px 120px; }
+.ts-scroll { flex: 1; overflow-y: auto; padding: 0 32px 120px; scrollbar-width: thin; scrollbar-color: var(--paper-edge) transparent; }
 
 .ts-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ts-table thead th {
-  position: sticky; top: 138px;
+  position: sticky; top: 0;
   background: var(--paper);
   text-align: left; font-weight: 500; font-size: 10px;
   text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-fade);
