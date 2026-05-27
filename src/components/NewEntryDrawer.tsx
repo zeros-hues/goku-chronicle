@@ -5,9 +5,11 @@ import { fmtDate } from '@/lib/data';
 import type { Entry, BillingType, Client, Member } from '@/lib/data';
 import { IconX, IconCheck, IconCalendar, IconWarn } from './Icons';
 
-const DRAFT_KEY = 'chronicle-draft';
+const DRAFT_NEW_KEY     = 'chronicle-draft-new-entry';
+const RECENT_PROJ_KEY   = 'chronicle-recent-projects';
+const DRAFT_TTL         = 24 * 60 * 60 * 1000; // 24 h
 
-interface DraftState {
+interface DraftData {
   date: string;
   type: 'task' | 'meeting';
   projectId: string;
@@ -15,6 +17,12 @@ interface DraftState {
   hours: Record<string, string>;
   meetingDuration: string;
   meetingPeople: string;
+}
+
+interface Draft {
+  data: DraftData;
+  savedAt: number;
+  expiresAt: number;
 }
 
 interface EntryDrawerProps {
@@ -25,59 +33,122 @@ interface EntryDrawerProps {
   onSave: (entry: Entry) => void;
 }
 
-function loadDraft(): DraftState | null {
+/* ── localStorage helpers ───────────────────────────────── */
+function safeSave(key: string, value: unknown) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ }
+}
+
+function safeLoad<T>(key: string): T | null {
   try {
-    const raw = localStorage.getItem(DRAFT_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as DraftState;
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
   } catch { return null; }
 }
 
+function loadDraft(key: string): Draft | null {
+  const d = safeLoad<Draft>(key);
+  if (!d) return null;
+  if (Date.now() > d.expiresAt) {
+    try { localStorage.removeItem(key); } catch { /* ignore */ }
+    return null;
+  }
+  return d;
+}
+
+function saveDraft(key: string, data: DraftData) {
+  const now = Date.now();
+  safeSave(key, { data, savedAt: now, expiresAt: now + DRAFT_TTL });
+}
+
+function clearDraftKey(key: string) {
+  try { localStorage.removeItem(key); } catch { /* ignore */ }
+}
+
+/* ── Recently used projects ─────────────────────────────── */
+function addRecentProject(projectId: string) {
+  const recent = safeLoad<string[]>(RECENT_PROJ_KEY) ?? [];
+  const updated = [projectId, ...recent.filter(id => id !== projectId)].slice(0, 5);
+  safeSave(RECENT_PROJ_KEY, updated);
+}
+
+function getRecentProjects(): string[] {
+  return safeLoad<string[]>(RECENT_PROJ_KEY) ?? [];
+}
+
+/* ── Time-ago helper ────────────────────────────────────── */
+function timeAgo(ts: number): string {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60_000);
+  const hrs  = Math.floor(diff / 3_600_000);
+  const days = Math.floor(diff / 86_400_000);
+  if (days >= 1) return 'yesterday';
+  if (hrs  >= 1) return `${hrs} hour${hrs > 1 ? 's' : ''} ago`;
+  if (mins >= 1) return `${mins} minute${mins > 1 ? 's' : ''} ago`;
+  return 'just now';
+}
+
+/* ── Helpers ─────────────────────────────────────────────── */
 function initHoursStr(hours: Record<string, number>): Record<string, string> {
   return Object.fromEntries(Object.entries(hours).map(([k, v]) => [k, v > 0 ? String(v) : '']));
 }
 
 export default function EntryDrawer({ entry, clients, members, onClose, onSave }: EntryDrawerProps) {
-  const isEdit = !!entry;
-  const draft = !isEdit ? loadDraft() : null;
-  const today = fmtDate(new Date());
+  const isEdit   = !!entry;
+  const draftKey = isEdit ? `chronicle-draft-edit-entry-${entry!.id}` : DRAFT_NEW_KEY;
+  const draft    = loadDraft(draftKey);
+  const today    = fmtDate(new Date());
 
-  // Only show active, non-archived projects in the picker
   const activeClients = clients.map(c => ({
     ...c,
     projects: c.projects.filter(p => !p.archivedAt),
   })).filter(c => c.projects.length > 0 || clients.find(x => x.id === c.id));
 
-  const allProjects = clients.flatMap(c => c.projects.map(p => ({ ...p, clientId: c.id })));
-  const projectById = Object.fromEntries(allProjects.map(p => [p.id, p]));
+  const allProjects  = clients.flatMap(c => c.projects.map(p => ({ ...p, clientId: c.id })));
+  const projectById  = Object.fromEntries(allProjects.map(p => [p.id, p]));
 
-  const [date, setDate]               = useState(() => isEdit ? entry!.date : draft?.date ?? today);
-  const [type, setType]               = useState<'task' | 'meeting'>(() => isEdit ? entry!.type : draft?.type ?? 'task');
-  const [projectId, setProjectId]     = useState(() => isEdit ? entry!.projectId : draft?.projectId ?? '');
-  const [task, setTask]               = useState(() => isEdit ? entry!.task : draft?.task ?? '');
+  /* ── State — initialized from entry (edit) or draft (new) ─ */
+  const [date, setDate]               = useState(() => isEdit ? entry!.date           : draft?.data.date            ?? today);
+  const [type, setType]               = useState<'task' | 'meeting'>(() => isEdit ? entry!.type  : draft?.data.type ?? 'task');
+  const [projectId, setProjectIdRaw]  = useState(() => isEdit ? entry!.projectId      : draft?.data.projectId       ?? '');
+  const [task, setTask]               = useState(() => isEdit ? entry!.task           : draft?.data.task            ?? '');
   const [hours, setHours]             = useState<Record<string, string>>(() =>
-    isEdit ? initHoursStr(entry!.hours) : draft?.hours ?? {}
+    isEdit ? initHoursStr(entry!.hours) : draft?.data.hours ?? {}
   );
   const [meetingDuration, setDuration] = useState(() =>
-    isEdit ? String(entry!.meetingDuration ?? '') : draft?.meetingDuration ?? ''
+    isEdit ? String(entry!.meetingDuration ?? '') : draft?.data.meetingDuration ?? ''
   );
   const [meetingPeople, setPeople]    = useState(() =>
-    isEdit ? String(entry!.meetingPeople ?? '') : draft?.meetingPeople ?? ''
+    isEdit ? String(entry!.meetingPeople ?? '') : draft?.data.meetingPeople ?? ''
   );
 
-  const [hasDraft, setHasDraft]       = useState(!isEdit && draft !== null && !!(draft.task || draft.projectId));
+  const hasMeaningfulDraft = !!(draft && (draft.data.task?.trim() || draft.data.projectId));
+  const [draftBanner, setDraftBanner] = useState<Draft | null>(
+    isEdit ? (hasMeaningfulDraft ? draft : null) : (hasMeaningfulDraft ? draft : null)
+  );
   const [flash, setFlash]             = useState(false);
   const [sessionCount, setSessionCount] = useState(0);
+  const [recentProjects, setRecentProjects] = useState<string[]>(() => getRecentProjects());
 
-  // Auto-save draft to localStorage (new entries only)
+  /* ── Project selector with recent tracking ──────────────── */
+  function setProjectId(id: string) {
+    setProjectIdRaw(id);
+    if (id) {
+      addRecentProject(id);
+      setRecentProjects(getRecentProjects());
+    }
+  }
+
+  /* ── Auto-save draft every 2 s while form has data ─────── */
   useEffect(() => {
-    if (isEdit) return;
-    const isEmpty = !task && !projectId && Object.keys(hours).length === 0 && !meetingDuration && !meetingPeople;
-    if (isEmpty) return;
-    const d: DraftState = { date, type, projectId, task, hours, meetingDuration, meetingPeople };
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
-  }, [isEdit, date, type, projectId, task, hours, meetingDuration, meetingPeople]);
+    const hasData = task.trim().length > 0 || !!projectId;
+    if (!hasData) return;
 
+    const data: DraftData = { date, type, projectId, task, hours, meetingDuration, meetingPeople };
+    const timer = setInterval(() => saveDraft(draftKey, data), 2000);
+    return () => clearInterval(timer);
+  }, [draftKey, date, type, projectId, task, hours, meetingDuration, meetingPeople]);
+
+  /* ── Derived ─────────────────────────────────────────────── */
   const selectedProj = projectById[projectId];
   const billing: BillingType = selectedProj?.billing ?? 'retainer';
 
@@ -113,7 +184,7 @@ export default function EntryDrawer({ entry, clients, members, onClose, onSave }
   function handleSave() {
     if (!canSave()) return;
     onSave(buildEntry());
-    localStorage.removeItem(DRAFT_KEY);
+    clearDraftKey(draftKey);
     setFlash(true);
     setTimeout(() => { setFlash(false); onClose(); }, 700);
   }
@@ -121,7 +192,7 @@ export default function EntryDrawer({ entry, clients, members, onClose, onSave }
   function handleSaveAndAdd() {
     if (!canSave()) return;
     onSave(buildEntry());
-    localStorage.removeItem(DRAFT_KEY);
+    clearDraftKey(draftKey);
     setSessionCount(n => n + 1);
     setTask('');
     setHours({});
@@ -132,24 +203,44 @@ export default function EntryDrawer({ entry, clients, members, onClose, onSave }
   }
 
   function setMeetingDuration(v: string) { setDuration(v); }
-  function setMeetingPeople(v: string) { setPeople(v); }
+  function setMeetingPeople(v: string)   { setPeople(v);   }
 
   function handleDiscard() {
-    localStorage.removeItem(DRAFT_KEY);
+    clearDraftKey(draftKey);
     onClose();
   }
 
-  function discardDraft() {
-    localStorage.removeItem(DRAFT_KEY);
-    setHasDraft(false);
-    setDate(today);
-    setType('task');
-    setProjectId('');
-    setTask('');
-    setHours({});
-    setDuration('');
-    setPeople('');
+  function restoreDraft() {
+    if (!draftBanner) return;
+    const d = draftBanner.data;
+    setDate(d.date ?? today);
+    setType(d.type ?? 'task');
+    setProjectIdRaw(d.projectId ?? '');
+    setTask(d.task ?? '');
+    setHours(d.hours ?? {});
+    setDuration(d.meetingDuration ?? '');
+    setPeople(d.meetingPeople ?? '');
+    setDraftBanner(null);
   }
+
+  function discardDraft() {
+    clearDraftKey(draftKey);
+    setDraftBanner(null);
+    if (!isEdit) {
+      setDate(today);
+      setType('task');
+      setProjectIdRaw('');
+      setTask('');
+      setHours({});
+      setDuration('');
+      setPeople('');
+    }
+  }
+
+  /* ── Build recent + all project list ───────────────────── */
+  const recentProjObjects = recentProjects
+    .map(id => allProjects.find(p => p.id === id))
+    .filter((p): p is typeof allProjects[number] => !!p && !p.archivedAt);
 
   return (
     <>
@@ -171,17 +262,17 @@ export default function EntryDrawer({ entry, clients, members, onClose, onSave }
 
         <div className="drawer-body">
 
-          {hasDraft && !isEdit && (
+          {draftBanner && (
             <div className="draft-banner">
               <IconWarn size={15} className="ic" />
               <div>
                 <b>Unsaved draft found</b>
                 <div style={{ marginTop: 2, fontSize: 12.5, color: 'var(--ink-soft)' }}>
-                  You have an unfinished entry from a previous session.
+                  You have an unfinished entry from {timeAgo(draftBanner.savedAt)}.
                 </div>
                 <div className="acts">
-                  <button className="primary" onClick={() => setHasDraft(false)}>Restore draft</button>
-                  <button onClick={discardDraft}>Discard</button>
+                  <button className="primary" onClick={restoreDraft}>Restore draft</button>
+                  <button onClick={discardDraft}>Start fresh</button>
                 </div>
               </div>
             </div>
@@ -218,14 +309,12 @@ export default function EntryDrawer({ entry, clients, members, onClose, onSave }
                 No projects yet — add them in Settings → Clients &amp; Projects.
               </p>
             ) : (
-              activeClients.map(client => {
-                const visibleProjects = client.projects.filter(p => !p.archivedAt);
-                if (visibleProjects.length === 0) return null;
-                return (
-                  <div key={client.id} className="proj-group">
-                    <div className="proj-group-title">{client.name}</div>
+              <>
+                {recentProjObjects.length > 0 && (
+                  <div className="proj-group">
+                    <div className="proj-group-title" style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-ghost)' }}>Recent</div>
                     <div className="proj-pills">
-                      {visibleProjects.map(proj => (
+                      {recentProjObjects.map(proj => (
                         <button
                           key={proj.id}
                           className={'proj-pill-btn' + (projectId === proj.id ? ' selected' : '')}
@@ -237,8 +326,29 @@ export default function EntryDrawer({ entry, clients, members, onClose, onSave }
                       ))}
                     </div>
                   </div>
-                );
-              })
+                )}
+                {activeClients.map(client => {
+                  const visibleProjects = client.projects.filter(p => !p.archivedAt);
+                  if (visibleProjects.length === 0) return null;
+                  return (
+                    <div key={client.id} className="proj-group">
+                      <div className="proj-group-title">{client.name}</div>
+                      <div className="proj-pills">
+                        {visibleProjects.map(proj => (
+                          <button
+                            key={proj.id}
+                            className={'proj-pill-btn' + (projectId === proj.id ? ' selected' : '')}
+                            onClick={() => setProjectId(proj.id)}
+                          >
+                            <span className="swatch" style={{ background: proj.color }} />
+                            {proj.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
             )}
           </div>
 
@@ -251,7 +361,7 @@ export default function EntryDrawer({ entry, clients, members, onClose, onSave }
               onChange={e => setTask(e.target.value)}
               placeholder="What was worked on?"
               rows={3}
-              autoFocus={!hasDraft}
+              autoFocus={!draftBanner}
             />
           </div>
 
@@ -289,8 +399,8 @@ export default function EntryDrawer({ entry, clients, members, onClose, onSave }
 
           {/* Meeting fields */}
           {type === 'meeting' && (() => {
-            const dur = parseFloat(meetingDuration) || 0;
-            const ppl = parseInt(meetingPeople) || 0;
+            const dur   = parseFloat(meetingDuration) || 0;
+            const ppl   = parseInt(meetingPeople)     || 0;
             const total = dur > 0 && ppl > 0 ? dur * ppl : null;
             const totalDisplay = total !== null
               ? `${total % 1 === 0 ? total : total.toFixed(2).replace(/\.?0+$/, '')}h`

@@ -2,7 +2,6 @@
 
 import { useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
-import { useRouter } from 'next/navigation';
 import type { View, Theme, Member } from '@/lib/data';
 import {
   IconTimesheet, IconExport, IconTrash,
@@ -19,7 +18,7 @@ interface NavItem {
 
 interface SidebarProps {
   view: View;
-  setView: (v: View) => void;
+  navigate: (v: View) => void;
   theme: Theme;
   setTheme: (t: Theme) => void;
   trashCount: number;
@@ -42,10 +41,9 @@ const SETTINGS_ITEMS: NavItem[] = [
 ];
 
 export default function Sidebar({
-  view, setView, theme, setTheme, trashCount, currentUser, onSignOut,
+  view, navigate, theme, setTheme, trashCount, currentUser, onSignOut,
   activityCount, onActivityClick,
 }: SidebarProps) {
-  const router = useRouter();
   const isDark = theme === 'dark';
   const sidebarRef = useRef<HTMLElement>(null);
 
@@ -79,10 +77,10 @@ export default function Sidebar({
         <div
           key={n.id}
           className={'nav-item' + (view === n.id ? ' active' : '')}
-          onClick={() => setView(n.id)}
+          onClick={() => navigate(n.id)}
           role="button"
           tabIndex={0}
-          onKeyDown={e => e.key === 'Enter' && setView(n.id)}
+          onKeyDown={e => e.key === 'Enter' && navigate(n.id)}
         >
           {n.icon}
           <span>{n.label}</span>
@@ -109,10 +107,10 @@ export default function Sidebar({
         <div
           key={n.id}
           className={'nav-item' + (view === n.id ? ' active' : '')}
-          onClick={() => setView(n.id)}
+          onClick={() => navigate(n.id)}
           role="button"
           tabIndex={0}
-          onKeyDown={e => e.key === 'Enter' && setView(n.id)}
+          onKeyDown={e => e.key === 'Enter' && navigate(n.id)}
         >
           {n.icon}
           <span>{n.label}</span>
@@ -139,7 +137,7 @@ export default function Sidebar({
         {/* Sign out */}
         <div
           className="nav-item"
-          onClick={() => router.push('/login')}
+          onClick={onSignOut}
           role="button"
           tabIndex={0}
           onKeyDown={e => e.key === 'Enter' && onSignOut()}

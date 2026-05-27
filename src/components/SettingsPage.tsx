@@ -3,7 +3,55 @@
 import { useState, useEffect } from 'react';
 import type { View, Client, Member, BillingType } from '@/lib/data';
 import * as api from '@/lib/api';
-import { IconPlus, IconEdit, IconCheck, IconX } from './Icons';
+import { IconPlus, IconEdit, IconCheck, IconX, IconWarn } from './Icons';
+
+/* ── localStorage helpers ───────────────────────────────── */
+const DRAFT_TTL = 24 * 60 * 60 * 1000;
+
+interface Draft<T> {
+  data: T;
+  savedAt: number;
+  expiresAt: number;
+}
+
+function safeSave(key: string, value: unknown) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ }
+}
+
+function safeLoad<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch { return null; }
+}
+
+function loadDraft<T>(key: string): Draft<T> | null {
+  const d = safeLoad<Draft<T>>(key);
+  if (!d) return null;
+  if (Date.now() > d.expiresAt) {
+    try { localStorage.removeItem(key); } catch { /* ignore */ }
+    return null;
+  }
+  return d;
+}
+
+function saveDraft<T>(key: string, data: T) {
+  const now = Date.now();
+  safeSave(key, { data, savedAt: now, expiresAt: now + DRAFT_TTL });
+}
+
+function clearDraftKey(key: string) {
+  try { localStorage.removeItem(key); } catch { /* ignore */ }
+}
+
+function timeAgo(ts: number): string {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60_000);
+  const hrs  = Math.floor(diff / 3_600_000);
+  if (hrs  >= 1) return `${hrs} hour${hrs > 1 ? 's' : ''} ago`;
+  if (mins >= 1) return `${mins} minute${mins > 1 ? 's' : ''} ago`;
+  return 'just now';
+}
 
 type Section = Extract<View, 'clients' | 'team' | 'account'>;
 
@@ -36,6 +84,7 @@ function ClientsSection({
   const [addingToClient, setAddingTo] = useState<string | null>(null);
   const [newProjName, setNewProjName] = useState('');
   const [newProjBilling, setNewProjBilling] = useState<BillingType>('retainer');
+  const [projDraftBanner, setProjDraftBanner] = useState<Draft<{ clientId: string; name: string; billing: BillingType }> | null>(null);
   const [addingClient, setAddingClient] = useState(false);
   const [newClientName, setNewClientName] = useState('');
   const [newClientRetainer, setNewClientRetainer] = useState(false);
@@ -57,6 +106,14 @@ function ClientsSection({
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!addingToClient || !newProjName.trim()) return;
+    const timer = setInterval(() => {
+      saveDraft('chronicle-draft-settings-new-project', { clientId: addingToClient, name: newProjName, billing: newProjBilling });
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [addingToClient, newProjName, newProjBilling]);
 
   async function saveProject(clientId: string, projId: string) {
     if (saving) return;
@@ -96,8 +153,16 @@ function ClientsSection({
   function startAddingProject(clientId: string) {
     const c = clients.find(x => x.id === clientId);
     setAddingTo(clientId);
-    setNewProjName('');
-    setNewProjBilling(c?.hasRetainership ? 'retainer' : 'internal');
+    const existing = loadDraft<{ clientId: string; name: string; billing: BillingType }>('chronicle-draft-settings-new-project');
+    if (existing && existing.data.clientId === clientId && existing.data.name) {
+      setProjDraftBanner(existing);
+      setNewProjName('');
+      setNewProjBilling(c?.hasRetainership ? 'retainer' : 'internal');
+    } else {
+      setProjDraftBanner(null);
+      setNewProjName('');
+      setNewProjBilling(c?.hasRetainership ? 'retainer' : 'internal');
+    }
   }
 
   async function addProject(clientId: string) {
@@ -116,8 +181,10 @@ function ClientsSection({
       const updated = await api.fetchClients();
       setClients(updated);
       onClientsChange(updated);
+      clearDraftKey('chronicle-draft-settings-new-project');
       setAddingTo(null);
       setNewProjName('');
+      setProjDraftBanner(null);
       showToast(`Project added — ${newProjName.trim()}`);
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Failed to add project');
@@ -293,18 +360,33 @@ function ClientsSection({
 
             {addingToClient === client.id && (
               <div style={{ padding: '12px 18px', borderTop: '1px dashed var(--paper-rule)' }}>
+                {projDraftBanner && (
+                  <div className="draft-banner" style={{ marginBottom: 10 }}>
+                    <IconWarn size={14} className="ic" />
+                    <div>
+                      <b>Unsaved draft</b>
+                      <div style={{ marginTop: 2, fontSize: 12.5, color: 'var(--ink-soft)' }}>
+                        Draft from {timeAgo(projDraftBanner.savedAt)}: &ldquo;{projDraftBanner.data.name}&rdquo;
+                      </div>
+                      <div className="acts">
+                        <button className="primary" onClick={() => { setNewProjName(projDraftBanner.data.name); setNewProjBilling(projDraftBanner.data.billing); setProjDraftBanner(null); }}>Restore</button>
+                        <button onClick={() => { clearDraftKey('chronicle-draft-settings-new-project'); setProjDraftBanner(null); }}>Dismiss</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: client.hasRetainership ? 10 : 0 }}>
                   <input
                     className="field-input"
                     value={newProjName}
                     onChange={e => setNewProjName(e.target.value)}
                     placeholder="Project name"
-                    autoFocus
-                    onKeyDown={e => { if (e.key === 'Enter') addProject(client.id); if (e.key === 'Escape') setAddingTo(null); }}
+                    autoFocus={!projDraftBanner}
+                    onKeyDown={e => { if (e.key === 'Enter') addProject(client.id); if (e.key === 'Escape') { clearDraftKey('chronicle-draft-settings-new-project'); setAddingTo(null); setProjDraftBanner(null); } }}
                     style={{ padding: '6px 10px', fontSize: 13 }}
                   />
                   <button className="btn btn-sm btn-icon" onClick={() => addProject(client.id)} disabled={saving}><IconCheck size={13} /></button>
-                  <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setAddingTo(null)}><IconX size={13} /></button>
+                  <button className="btn btn-ghost btn-sm btn-icon" onClick={() => { clearDraftKey('chronicle-draft-settings-new-project'); setAddingTo(null); setProjDraftBanner(null); }}><IconX size={13} /></button>
                 </div>
                 {client.hasRetainership && (
                   <div className="toggle-group" style={{ padding: 2 }}>
@@ -372,6 +454,7 @@ function TeamSection({
   const [addingNew, setAddingNew] = useState(false);
   const [newName, setNewName]     = useState('');
   const [newInit, setNewInit]     = useState('');
+  const [memberDraftBanner, setMemberDraftBanner] = useState<Draft<{ name: string; init: string }> | null>(null);
   const [saving, setSaving]       = useState(false);
 
   async function load() {
@@ -390,6 +473,14 @@ function TeamSection({
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!addingNew || (!newName.trim() && !newInit.trim())) return;
+    const timer = setInterval(() => {
+      saveDraft('chronicle-draft-settings-new-member', { name: newName, init: newInit });
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [addingNew, newName, newInit]);
 
   async function saveMember(id: string, index: number) {
     if (saving) return;
@@ -431,9 +522,11 @@ function TeamSection({
       const updated = await api.fetchMembers();
       setMembers(updated);
       onMembersChange(updated);
+      clearDraftKey('chronicle-draft-settings-new-member');
       setAddingNew(false);
       setNewName('');
       setNewInit('');
+      setMemberDraftBanner(null);
       showToast(`Team member added — ${newName.trim()}`);
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Failed to add member');
@@ -531,17 +624,38 @@ function TeamSection({
       )}
 
       {addingNew ? (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
-          <input className="field-input" value={newName} onChange={e => setNewName(e.target.value)}
-            placeholder="Full name" autoFocus style={{ maxWidth: 200 }}
-            onKeyDown={e => { if (e.key === 'Enter') addMember(); if (e.key === 'Escape') setAddingNew(false); }} />
-          <input className="field-input" value={newInit} onChange={e => setNewInit(e.target.value)}
-            placeholder="Initials" style={{ maxWidth: 80 }} />
-          <button className="btn btn-sm" onClick={addMember} disabled={saving}><IconCheck size={13} /> Add</button>
-          <button className="btn btn-ghost btn-sm" onClick={() => setAddingNew(false)}>Cancel</button>
+        <div style={{ marginTop: 4 }}>
+          {memberDraftBanner && (
+            <div className="draft-banner" style={{ marginBottom: 10 }}>
+              <IconWarn size={14} className="ic" />
+              <div>
+                <b>Unsaved draft</b>
+                <div style={{ marginTop: 2, fontSize: 12.5, color: 'var(--ink-soft)' }}>
+                  Draft from {timeAgo(memberDraftBanner.savedAt)}: &ldquo;{memberDraftBanner.data.name}&rdquo;
+                </div>
+                <div className="acts">
+                  <button className="primary" onClick={() => { setNewName(memberDraftBanner.data.name); setNewInit(memberDraftBanner.data.init); setMemberDraftBanner(null); }}>Restore</button>
+                  <button onClick={() => { clearDraftKey('chronicle-draft-settings-new-member'); setMemberDraftBanner(null); }}>Dismiss</button>
+                </div>
+              </div>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input className="field-input" value={newName} onChange={e => setNewName(e.target.value)}
+              placeholder="Full name" autoFocus={!memberDraftBanner} style={{ maxWidth: 200 }}
+              onKeyDown={e => { if (e.key === 'Enter') addMember(); if (e.key === 'Escape') { clearDraftKey('chronicle-draft-settings-new-member'); setAddingNew(false); setMemberDraftBanner(null); } }} />
+            <input className="field-input" value={newInit} onChange={e => setNewInit(e.target.value)}
+              placeholder="Initials" style={{ maxWidth: 80 }} />
+            <button className="btn btn-sm" onClick={addMember} disabled={saving}><IconCheck size={13} /> Add</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => { clearDraftKey('chronicle-draft-settings-new-member'); setAddingNew(false); setMemberDraftBanner(null); }}>Cancel</button>
+          </div>
         </div>
       ) : (
-        <button className="btn" style={{ marginTop: 4 }} onClick={() => setAddingNew(true)}>
+        <button className="btn" style={{ marginTop: 4 }} onClick={() => {
+          const existing = loadDraft<{ name: string; init: string }>('chronicle-draft-settings-new-member');
+          if (existing && (existing.data.name || existing.data.init)) setMemberDraftBanner(existing);
+          setAddingNew(true);
+        }}>
           <IconPlus size={14} /> Invite member
         </button>
       )}
@@ -561,6 +675,8 @@ function AccountSection({
   const [error, setError]           = useState(false);
   const [hoursTarget, setHoursTarget] = useState(8);
   const [overtimeThreshold, setOvertimeThreshold] = useState(8);
+  const [loadedWorkSettings, setLoadedWorkSettings] = useState<{ hoursTarget: number; overtimeThreshold: number } | null>(null);
+  const [workDraftBanner, setWorkDraftBanner] = useState<Draft<{ hoursTarget: number; overtimeThreshold: number }> | null>(null);
   const [holidays, setHolidays]     = useState<{ id: string; date: string; label: string | null }[]>([]);
 
   const [currentPw, setCurrentPw]   = useState('');
@@ -580,10 +696,15 @@ function AccountSection({
       const account = await api.fetchAccount();
       setHoursTarget(account.hoursTarget);
       setOvertimeThreshold(account.overtimeThreshold);
+      setLoadedWorkSettings({ hoursTarget: account.hoursTarget, overtimeThreshold: account.overtimeThreshold });
       setHolidays(account.holidays);
       const hmap: Record<string, string> = {};
       for (const h of account.holidays) hmap[h.date.slice(0, 10)] = h.label ?? '';
       onHolidaysChange(hmap);
+      const workDraft = loadDraft<{ hoursTarget: number; overtimeThreshold: number }>('chronicle-draft-settings-account');
+      if (workDraft && (workDraft.data.hoursTarget !== account.hoursTarget || workDraft.data.overtimeThreshold !== account.overtimeThreshold)) {
+        setWorkDraftBanner(workDraft);
+      }
     } catch {
       setError(true);
     } finally {
@@ -593,6 +714,15 @@ function AccountSection({
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!loadedWorkSettings) return;
+    if (hoursTarget === loadedWorkSettings.hoursTarget && overtimeThreshold === loadedWorkSettings.overtimeThreshold) return;
+    const timer = setInterval(() => {
+      saveDraft('chronicle-draft-settings-account', { hoursTarget, overtimeThreshold });
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [hoursTarget, overtimeThreshold, loadedWorkSettings]);
 
   async function handlePasswordChange(e: React.FormEvent) {
     e.preventDefault();
@@ -617,6 +747,9 @@ function AccountSection({
     setWorkSaving(true);
     try {
       await api.updateAccount({ hoursTarget, overtimeThreshold });
+      clearDraftKey('chronicle-draft-settings-account');
+      setWorkDraftBanner(null);
+      setLoadedWorkSettings({ hoursTarget, overtimeThreshold });
       showToast('Work settings saved');
     } catch {
       showToast('Failed to save work settings');
@@ -719,6 +852,21 @@ function AccountSection({
         <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--ink-fade)', margin: '0 0 14px' }}>
           Work settings
         </p>
+        {workDraftBanner && (
+          <div className="draft-banner" style={{ marginBottom: 14 }}>
+            <IconWarn size={14} className="ic" />
+            <div>
+              <b>Unsaved changes</b>
+              <div style={{ marginTop: 2, fontSize: 12.5, color: 'var(--ink-soft)' }}>
+                Unsaved draft from {timeAgo(workDraftBanner.savedAt)} — target {workDraftBanner.data.hoursTarget}h, overtime {workDraftBanner.data.overtimeThreshold}h
+              </div>
+              <div className="acts">
+                <button className="primary" onClick={() => { setHoursTarget(workDraftBanner.data.hoursTarget); setOvertimeThreshold(workDraftBanner.data.overtimeThreshold); setWorkDraftBanner(null); }}>Restore</button>
+                <button onClick={() => { clearDraftKey('chronicle-draft-settings-account'); setWorkDraftBanner(null); }}>Dismiss</button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="input-block">
           <label className="field-label">Daily hour target per person</label>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
