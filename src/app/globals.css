@@ -639,9 +639,18 @@ input, textarea, select { font-family: inherit; color: inherit; }
   padding: 3px 9px 3px 8px; border-radius: 999px;
   font-size: 11.5px; font-weight: 500; white-space: nowrap;
   border: 1px solid transparent; font-family: var(--font-sans);
+  background: color-mix(in oklab, var(--pill-color) 18%, transparent);
+  border-color: color-mix(in oklab, var(--pill-color) 35%, transparent);
+  color: color-mix(in oklab, var(--pill-color) 95%, var(--ink) 40%);
 }
-.proj-pill .swatch { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.proj-pill .client { color: oklch(0.20 0.012 60 / 0.55); margin-right: 4px; font-size: 10.5px; }
+.proj-pill-sm { font-size: 11px; }
+.proj-pill .swatch { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--pill-color); }
+.proj-pill .client { color: color-mix(in oklab, var(--ink) 55%, transparent); margin-right: 4px; font-size: 10.5px; }
+[data-theme="dark"] .proj-pill {
+  background: color-mix(in oklab, var(--pill-color) 28%, var(--paper-deep));
+  border-color: color-mix(in oklab, var(--pill-color) 50%, var(--paper-edge));
+}
+[data-theme="dark"] .proj-pill .client { color: var(--ink-fade); }
 
 /* ── Expanded row ────────────────────────────────────────── */
 .expanded-detail { background: var(--paper-tint); border-bottom: 1px solid var(--paper-edge); }
@@ -1226,6 +1235,28 @@ input, textarea, select { font-family: inherit; color: inherit; }
   font-family: var(--font-mono); font-size: 11px; color: var(--ink-fade);
   letter-spacing: 0.08em; background: var(--paper-deep); padding: 4px 10px;
   border-radius: 999px; border: 1px solid var(--paper-edge);
+}
+
+/* ── Filter sync banner ──────────────────────────────────── */
+.filter-sync-banner {
+  margin: 0 24px 4px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--paper-deep);
+  border: 1px solid var(--paper-edge);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-fade);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  animation: syncBannerFade 2.5s ease forwards;
+}
+@keyframes syncBannerFade {
+  0%   { opacity: 1; }
+  70%  { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 /* ── Dashboard empty state ───────────────────────────────── */

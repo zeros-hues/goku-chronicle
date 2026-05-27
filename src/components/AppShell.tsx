@@ -20,6 +20,7 @@ import { dowFull, monShort } from '@/lib/data';
 import type { View, Theme, Entry, Client, Member, ActivityEvent } from '@/lib/data';
 import * as api from '@/lib/api';
 import { IconPlus, IconImport, IconTimesheet, IconDashboard, IconCheck } from '@/components/Icons';
+import { FilterProvider } from '@/context/FilterContext';
 
 /* ── Toast types ─────────────────────────────────────────── */
 interface ToastItem {
@@ -406,6 +407,7 @@ export default function AppShell() {
   );
 
   return (
+    <FilterProvider>
     <div className="app">
       <Sidebar
         view={view}
@@ -453,6 +455,7 @@ export default function AppShell() {
           <PageTransition key="dashboard">
             <Dashboard
               entries={entries}
+              clients={clients}
               members={activeMembers}
               projectById={projectById}
               holidays={holidays}
@@ -542,5 +545,6 @@ export default function AppShell() {
         </div>
       )}
     </div>
+    </FilterProvider>
   );
 }

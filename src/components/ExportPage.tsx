@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import { entryHours, entryMemberHours, fmtDate, dowShort, pad } from '@/lib/data';
 import type { Entry, Client, Member, Project } from '@/lib/data';
+import { useFilters } from '@/context/FilterContext';
 import ProjectPill from './ProjectPill';
 import { IconDownload } from './Icons';
 
@@ -37,19 +38,34 @@ interface ExportPageProps {
 }
 
 export default function ExportPage({ entries: all, clients, members, projectById, showToast }: ExportPageProps) {
-  const today = useMemo(() => new Date(), []);
+  // Read shared filters once on mount to initialise local state.
+  // Export changes are purely local — they don't write back to the shared context.
+  const { filters: sharedFilters } = useFilters();
+
+  const today    = useMemo(() => new Date(), []);
   const todayStr = fmtDate(today);
 
-  const firstClientId = clients[0]?.id ?? '';
-  const firstClient = clients[0];
+  const firstClientId  = clients[0]?.id ?? '';
+  const firstClient    = clients[0];
   const defaultBilling = firstClient?.hasRetainership ? 'retainer' : firstClient ? 'internal' : 'all';
 
-  const [range, setRange]             = useState<RangeId>('this-month');
-  const [customStart, setCustomStart] = useState(() => { const d = new Date(today); d.setDate(d.getDate() - 30); return fmtDate(d); });
-  const [customEnd, setCustomEnd]     = useState(todayStr);
-  const [client, setClient]           = useState(firstClientId || 'all');
-  const [billing, setBilling]         = useState(defaultBilling);
-  const [anon, setAnon]               = useState(firstClient?.hasRetainership ?? true);
+  const [range, setRange] = useState<RangeId>(() => {
+    const map: Partial<Record<string, RangeId>> = {
+      this_month: 'this-month', last_month: 'last-month',
+      this_year: 'this-year', all: 'all', custom: 'custom',
+    };
+    return map[sharedFilters.dateRange.preset] ?? 'this-month';
+  });
+  const [customStart, setCustomStart] = useState(sharedFilters.dateRange.startDate);
+  const [customEnd,   setCustomEnd]   = useState(sharedFilters.dateRange.endDate);
+  const [client,  setClient]  = useState(() => {
+    if (sharedFilters.clientId && clients.some(c => c.id === sharedFilters.clientId)) {
+      return sharedFilters.clientId;
+    }
+    return firstClientId || 'all';
+  });
+  const [billing, setBilling] = useState(() => sharedFilters.billingType !== 'all' ? sharedFilters.billingType : defaultBilling);
+  const [anon, setAnon]       = useState(firstClient?.hasRetainership ?? true);
 
   const selectedClient = clients.find(c => c.id === client);
   const isInternalClient = selectedClient ? !selectedClient.hasRetainership : false;

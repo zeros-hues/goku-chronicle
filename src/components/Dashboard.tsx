@@ -3,18 +3,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { gsap } from 'gsap';
 import { entryHours, isWeekend, fmtDate, monShort, dowShort, pad } from '@/lib/data';
-import type { Entry, Member, Project } from '@/lib/data';
+import type { Entry, Client, Member, Project } from '@/lib/data';
+import { useFilters } from '@/context/FilterContext';
+import SharedFilterBar, { DASHBOARD_RANGES } from './SharedFilterBar';
 import { IconPrint } from './Icons';
-
-type RangeId = 'today' | 'this-week' | 'this-month' | 'last-month' | 'this-year';
-
-const RANGES: { id: RangeId; label: string }[] = [
-  { id: 'today',      label: 'Today'      },
-  { id: 'this-week',  label: 'This week'  },
-  { id: 'this-month', label: 'This month' },
-  { id: 'last-month', label: 'Last month' },
-  { id: 'this-year',  label: 'This year'  },
-];
 
 type ProjectWithMeta = Project & { clientId: string; clientName: string };
 
@@ -24,8 +16,8 @@ function useCountUp(target: number, dur = 1100) {
     const start = performance.now();
     let raf: number;
     const tick = (t: number) => {
-      const k = Math.min(1, (t - start) / dur);
-      const eased = 1 - Math.pow(1 - k, 3);
+      const k      = Math.min(1, (t - start) / dur);
+      const eased  = 1 - Math.pow(1 - k, 3);
       setN(target * eased);
       if (k < 1) raf = requestAnimationFrame(tick);
     };
@@ -73,18 +65,58 @@ function BarRow({ label, value, max, color }: {
 
 interface DashboardProps {
   entries: Entry[];
+  clients: Client[];
   members: Member[];
   projectById: Record<string, ProjectWithMeta>;
   holidays: Record<string, string>;
   hoursTarget: number;
 }
 
-export default function Dashboard({ entries, members, projectById, holidays, hoursTarget }: DashboardProps) {
-  const today = useMemo(() => new Date(), []);
+export default function Dashboard({ entries, clients, members, projectById, holidays, hoursTarget }: DashboardProps) {
+  const today       = useMemo(() => new Date(), []);
   const DAILY_TARGET = hoursTarget;
-  const [range, setRange] = useState<RangeId>('this-month');
   const metricGridRef = useRef<HTMLDivElement>(null);
 
+  // ── Shared filters ───────────────────────────────────────────
+  const { filters } = useFilters();
+  const rangeStart = useMemo(
+    () => new Date(filters.dateRange.startDate + 'T00:00:00'),
+    [filters.dateRange.startDate],
+  );
+  const rangeEnd = useMemo(
+    () => new Date(filters.dateRange.endDate + 'T00:00:00'),
+    [filters.dateRange.endDate],
+  );
+
+  // ── Filter sync indicator — shown briefly on mount when filters are non-default
+  const [syncBanner, setSyncBanner] = useState(false);
+  const initialFilters = useRef(filters);
+  useEffect(() => {
+    const f = initialFilters.current;
+    const isNonDefault = f.clientId !== null || f.billingType !== 'all' || f.dateRange.preset !== 'this_month';
+    if (!isNonDefault) return;
+    setSyncBanner(true);
+    const t = setTimeout(() => setSyncBanner(false), 2500);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const syncLabel = useMemo(() => {
+    const rangeLabel = DASHBOARD_RANGES.find(r => r.id === filters.dateRange.preset)?.label
+      ?? filters.dateRange.preset.replace(/_/g, ' ');
+    const parts = [rangeLabel];
+    if (filters.clientId) {
+      const name = clients.find(c => c.id === filters.clientId)?.name;
+      if (name) parts.push(name);
+    }
+    if (filters.billingType !== 'all') {
+      parts.push(filters.billingType === 'retainer' ? 'Retainership'
+        : filters.billingType === 'out' ? 'Out of Retainer' : 'Internal');
+    }
+    return parts.join(' · ');
+  }, [filters, clients]);
+
+  // ── Entry animation ──────────────────────────────────────────
   useEffect(() => {
     if (!metricGridRef.current) return;
     const ctx = gsap.context(() => {
@@ -96,27 +128,16 @@ export default function Dashboard({ entries, members, projectById, holidays, hou
     return () => ctx.revert();
   }, []);
 
-  const [rangeStart, rangeEnd] = useMemo(() => {
-    const t = new Date(today);
-    if (range === 'today') return [
-      new Date(t.getFullYear(), t.getMonth(), t.getDate()),
-      new Date(t.getFullYear(), t.getMonth(), t.getDate()),
-    ];
-    if (range === 'this-week') {
-      const s = new Date(t); s.setDate(t.getDate() - t.getDay());
-      const e = new Date(s); e.setDate(s.getDate() + 6);
-      return [s, e];
-    }
-    if (range === 'this-month') return [new Date(t.getFullYear(), t.getMonth(), 1), new Date(t.getFullYear(), t.getMonth() + 1, 0)];
-    if (range === 'last-month') return [new Date(t.getFullYear(), t.getMonth() - 1, 1), new Date(t.getFullYear(), t.getMonth(), 0)];
-    return [new Date(t.getFullYear(), 0, 1), new Date(t.getFullYear(), 11, 31)];
-  }, [range, today]);
-
+  // ── Filtered entries ─────────────────────────────────────────
   const filtered = useMemo(() => entries.filter(e => {
     if (e.trashed) return false;
     const d = new Date(e.date + 'T00:00:00');
-    return d >= rangeStart && d <= rangeEnd;
-  }), [entries, rangeStart, rangeEnd]);
+    if (d < rangeStart || d > rangeEnd) return false;
+    const proj = projectById[e.projectId];
+    if (filters.clientId && proj?.clientId !== filters.clientId) return false;
+    if (filters.billingType !== 'all' && e.billing !== filters.billingType) return false;
+    return true;
+  }), [entries, rangeStart, rangeEnd, filters.clientId, filters.billingType, projectById]);
 
   const totalHours    = filtered.reduce((s, e) => s + entryHours(e), 0);
   const retainerHours = filtered.filter(e => e.billing === 'retainer').reduce((s, e) => s + entryHours(e), 0);
@@ -165,17 +186,13 @@ export default function Dashboard({ entries, members, projectById, holidays, hou
   });
   const dayEntries = Object.entries(dayMap).sort(([a], [b]) => a.localeCompare(b));
 
-  // Trim future empty days so the chart doesn't show dead space to the right
   const chartDays = dayEntries.filter(([d]) => new Date(d + 'T00:00:00') <= today);
-  const nChart = chartDays.length;
-  const maxDay = Math.max(1, ...chartDays.map(([, v]) => v.total));
+  const nChart    = chartDays.length;
+  const maxDay    = Math.max(1, ...chartDays.map(([, v]) => v.total));
 
-  // Adaptive column sizing: narrow fixed-width columns for long ranges (scroll if needed),
-  // flex for short ranges (fills full card width)
-  const colW   = nChart > 62 ? 5 : nChart > 31 ? 8 : undefined;
-  const gapPx  = nChart > 62 ? 1 : nChart > 31 ? 2 : 3;
+  const colW  = nChart > 62 ? 5 : nChart > 31 ? 8 : undefined;
+  const gapPx = nChart > 62 ? 1 : nChart > 31 ? 2 : 3;
 
-  // Goal + below-target
   const workingDays = dayEntries.filter(([d]) => {
     const dt = new Date(d + 'T00:00:00');
     return !isWeekend(dt) && !holidays[d] && dt <= today;
@@ -187,7 +204,6 @@ export default function Dashboard({ entries, members, projectById, holidays, hou
     .filter(([, v]) => v.total / Math.max(1, members.length) < DAILY_TARGET * 0.8)
     .map(([d]) => d).slice(0, 8);
 
-  // Overtime
   const overtime = members.map(m => {
     const days: { date: string; hours: number }[] = [];
     Object.entries(dayMap).forEach(([d, v]) => {
@@ -197,7 +213,6 @@ export default function Dashboard({ entries, members, projectById, holidays, hou
     return { member: m, days };
   }).filter(r => r.days.length > 0);
 
-  // Quick stats
   const busiestDay = dayEntries.reduce<[string, typeof dayMap[string]] | null>(
     (best, cur) => cur[1].total > (best?.[1].total ?? 0) ? cur : best, null
   );
@@ -209,16 +224,22 @@ export default function Dashboard({ entries, members, projectById, holidays, hou
     ? workingDays.reduce((s, [, v]) => s + v.total, 0) / workingDays.length
     : 0;
 
+  const filterBar = (
+    <div className="dash-range no-print">
+      <SharedFilterBar clients={clients} ranges={DASHBOARD_RANGES} />
+      <div style={{ flex: 1 }} />
+      {totalHours > 0 && (
+        <button className="btn btn-sm" onClick={() => window.print()}>
+          <IconPrint size={12} /> Print to PDF
+        </button>
+      )}
+    </div>
+  );
+
   if (totalHours === 0) {
     return (
       <div className="dash">
-        <div className="dash-range no-print">
-          {RANGES.map(r => (
-            <button key={r.id} className={'dash-range-chip' + (range === r.id ? ' active' : '')} onClick={() => setRange(r.id)}>
-              {r.label}
-            </button>
-          ))}
-        </div>
+        {filterBar}
         <div className="dash-empty">
           <svg width="72" height="72" viewBox="0 0 72 72" fill="none" className="empty-illustration">
             <rect x="10" y="40" width="8" height="20" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none"/>
@@ -237,22 +258,14 @@ export default function Dashboard({ entries, members, projectById, holidays, hou
 
   return (
     <div className="dash">
-      {/* Range + print */}
-      <div className="dash-range no-print">
-        {RANGES.map(r => (
-          <button
-            key={r.id}
-            className={'dash-range-chip' + (range === r.id ? ' active' : '')}
-            onClick={() => setRange(r.id)}
-          >
-            {r.label}
-          </button>
-        ))}
-        <div style={{ flex: 1 }} />
-        <button className="btn btn-sm" onClick={() => window.print()}>
-          <IconPrint size={12} /> Print to PDF
-        </button>
-      </div>
+      {filterBar}
+
+      {/* Filter sync banner */}
+      {syncBanner && (
+        <div className="filter-sync-banner">
+          Showing data for {syncLabel}
+        </div>
+      )}
 
       {/* Metrics */}
       <div className="metric-grid" ref={metricGridRef}>
@@ -286,7 +299,7 @@ export default function Dashboard({ entries, members, projectById, holidays, hou
             {projectRows.length === 0
               ? <p style={{ color: 'var(--ink-fade)', fontSize: 13, margin: 0 }}>No data for this period.</p>
               : projectRows.map((r, i) => {
-                  const pct = totalHours > 0 ? (r.hours / totalHours) * 100 : 0;
+                  const pct      = totalHours > 0 ? (r.hours / totalHours) * 100 : 0;
                   const widthRel = (r.hours / maxProj) * 100;
                   return (
                     <div key={r.project.id} className="proj-rank-row">
@@ -358,8 +371,8 @@ export default function Dashboard({ entries, members, projectById, holidays, hou
         <div className="stacked-wrap">
           <div className="stacked-chart" style={{ gap: gapPx }}>
             {chartDays.map(([d, v]) => {
-              const dt = new Date(d + 'T00:00:00');
-              const isWE = isWeekend(dt);
+              const dt    = new Date(d + 'T00:00:00');
+              const isWE  = isWeekend(dt);
               const isHol = !!holidays[d];
               return (
                 <div
@@ -369,7 +382,7 @@ export default function Dashboard({ entries, members, projectById, holidays, hou
                   style={colW ? { flex: 'none', width: colW } : undefined}
                 >
                   {Object.entries(v.members).map(([mid, h]) => {
-                    const mem = members.find(x => x.id === mid);
+                    const mem   = members.find(x => x.id === mid);
                     const color = mid === '__meet' ? 'var(--ink-ghost)' : mem ? mem.color : 'var(--ink-ghost)';
                     return <div key={mid} className="seg" style={{ height: (h / maxDay) * 200, background: color }} />;
                   })}

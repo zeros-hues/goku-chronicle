@@ -6,58 +6,19 @@ import {
   fmtDate, entryHours, entryMemberHours,
   dowFull, monShort,
 } from '@/lib/data';
-import type { Entry, BillingType, Client, Member, Project } from '@/lib/data';
+import type { Entry, Client, Member, Project } from '@/lib/data';
+import { useFilters } from '@/context/FilterContext';
+import SharedFilterBar, { TIMESHEET_RANGES } from './SharedFilterBar';
+import FilterChip from './FilterChip';
 import ProjectPill from './ProjectPill';
-import { IconSearch, IconCaret, IconTrash, IconCalendar, IconEdit } from './Icons';
+import { IconTrash, IconEdit } from './Icons';
 
-type DateRangeId = 'this-month' | 'last-month' | 'last-30' | 'last-60' | 'this-year' | 'all';
 type SortKey = 'date' | 'project' | 'total';
 type SortDir = 'asc' | 'desc';
-
-const DATE_RANGES: { id: DateRangeId; label: string }[] = [
-  { id: 'this-month', label: 'This month'   },
-  { id: 'last-month', label: 'Last month'   },
-  { id: 'last-30',    label: 'Last 30 days' },
-  { id: 'last-60',    label: 'Last 60 days' },
-  { id: 'this-year',  label: 'This year'    },
-  { id: 'all',        label: 'All entries'  },
-];
 
 type ProjectWithMeta = Project & { clientId: string; clientName: string };
 
 function fmt(h: number) { return h % 1 === 0 ? String(h) : h.toFixed(1); }
-
-function FilterChip({
-  label, icon, dot, open, onToggle, children,
-}: {
-  label: string; icon?: React.ReactNode; dot?: boolean;
-  open: boolean; onToggle: () => void; children: React.ReactNode;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    function h(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) onToggle(); }
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, [open, onToggle]);
-
-  return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button className={'filter-chip' + (dot ? ' active' : '')} onClick={onToggle}>
-        {icon}
-        {dot && !icon && <span className="dot" />}
-        <span>{label}</span>
-        <IconCaret size={10} className="caret" />
-      </button>
-      {open && (
-        <>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={onToggle} />
-          <div className="dropdown">{children}</div>
-        </>
-      )}
-    </div>
-  );
-}
 
 function SortMark({ colKey, sortBy }: { colKey: SortKey; sortBy: { key: SortKey; dir: SortDir } }) {
   if (sortBy.key !== colKey) return <span className="sort-mark">↕</span>;
@@ -98,49 +59,53 @@ interface TimesheetProps {
   searchRef?: React.RefObject<HTMLInputElement>;
 }
 
-export default function Timesheet({ entries, clients, members, projectById, onTrash, onRestore, onEdit, showToast, newEntryId, searchRef }: TimesheetProps) {
-  const today = useMemo(() => new Date(), []);
+export default function Timesheet({
+  entries, clients, members, projectById,
+  onTrash, onRestore, onEdit, showToast, newEntryId, searchRef,
+}: TimesheetProps) {
+  const today     = useMemo(() => new Date(), []);
   const TODAY_STR = fmtDate(today);
 
-  const [search, setSearch]     = useState('');
-  const [range, setRange]       = useState<DateRangeId>('this-month');
-  const [client, setClient]     = useState<string>('all');
-  const [billing, setBilling]   = useState<string>('all');
-  const [member, setMember]     = useState<string>('all');
-  const [sortBy, setSortBy]     = useState<{ key: SortKey; dir: SortDir }>({ key: 'date', dir: 'desc' });
+  // ── Shared filters from context ──────────────────────────────
+  const { filters } = useFilters();
+  const rangeStart = useMemo(
+    () => new Date(filters.dateRange.startDate + 'T00:00:00'),
+    [filters.dateRange.startDate],
+  );
+  const rangeEnd = useMemo(
+    () => new Date(filters.dateRange.endDate + 'T00:00:00'),
+    [filters.dateRange.endDate],
+  );
+
+  // ── Page-local filters ───────────────────────────────────────
+  const [search,   setSearch]   = useState('');
+  const [member,   setMember]   = useState<string>('all');
+  const [sortBy,   setSortBy]   = useState<{ key: SortKey; dir: SortDir }>({ key: 'date', dir: 'desc' });
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [openDrop, setOpenDrop] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<number | null>(null);
+
   const internalSearchRef = useRef<HTMLInputElement>(null);
-  const searchInputRef = searchRef ?? internalSearchRef;
-  const tbodyRef       = useRef<HTMLTableSectionElement>(null);
-  const hasAnimatedRef = useRef(false);
+  const searchInputRef    = searchRef ?? internalSearchRef;
+  const tbodyRef          = useRef<HTMLTableSectionElement>(null);
+  const hasAnimatedRef    = useRef(false);
 
-  const [rangeStart, rangeEnd] = useMemo(() => {
-    const t = new Date(today);
-    if (range === 'this-month') return [new Date(t.getFullYear(), t.getMonth(), 1), new Date(t.getFullYear(), t.getMonth() + 1, 0)];
-    if (range === 'last-month') return [new Date(t.getFullYear(), t.getMonth() - 1, 1), new Date(t.getFullYear(), t.getMonth(), 0)];
-    if (range === 'last-30') { const s = new Date(t); s.setDate(t.getDate() - 30); return [s, t]; }
-    if (range === 'last-60') { const s = new Date(t); s.setDate(t.getDate() - 60); return [s, t]; }
-    if (range === 'this-year') return [new Date(t.getFullYear(), 0, 1), new Date(t.getFullYear(), 11, 31)];
-    return [new Date(2000, 0, 1), new Date(2100, 0, 1)];
-  }, [range, today]);
-
+  // ── Filtered + grouped ───────────────────────────────────────
   const filtered = useMemo(() => entries.filter(e => {
     if (e.trashed) return false;
     const d = new Date(e.date + 'T00:00:00');
     if (d < rangeStart || d > rangeEnd) return false;
     const proj = projectById[e.projectId];
-    if (client !== 'all' && proj?.clientId !== client) return false;
-    if (billing !== 'all' && e.billing !== billing) return false;
+    if (filters.clientId && proj?.clientId !== filters.clientId) return false;
+    if (filters.billingType !== 'all' && e.billing !== filters.billingType) return false;
     if (member !== 'all' && e.type !== 'meeting' && !e.hours[member]) return false;
     if (search) {
       const s = search.toLowerCase();
       if (!e.task.toLowerCase().includes(s) && !proj?.name.toLowerCase().includes(s)) return false;
     }
     return true;
-  }), [entries, rangeStart, rangeEnd, client, billing, member, search, projectById]);
+  }), [entries, rangeStart, rangeEnd, filters.clientId, filters.billingType, member, search, projectById]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, Entry[]>();
@@ -173,6 +138,7 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
 
   const totalInView = filtered.reduce((s, e) => s + entryHours(e), 0);
 
+  // ── Entry animation on first load ────────────────────────────
   useEffect(() => {
     if (hasAnimatedRef.current || grouped.length === 0 || !tbodyRef.current) return;
     hasAnimatedRef.current = true;
@@ -184,6 +150,7 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
     );
   }, [grouped]);
 
+  // ── New-entry highlight + scroll ─────────────────────────────
   useEffect(() => {
     if (!newEntryId) return;
     setHighlightId(newEntryId);
@@ -226,15 +193,8 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
 
   function drop(key: string) { setOpenDrop(p => p === key ? null : key); }
 
-  const hasFilters = client !== 'all' || billing !== 'all' || member !== 'all' || !!search;
-  const rangeLabel   = DATE_RANGES.find(r => r.id === range)?.label ?? 'This month';
-  const clientLabel  = client === 'all' ? 'All clients' : clients.find(c => c.id === client)?.name ?? 'All clients';
-  const billingLabel = billing === 'all' ? 'All billing'
-    : billing === 'retainer' ? 'Retainership'
-    : billing === 'out' ? 'Out of Retainer'
-    : 'Internal';
-  const memberLabel  = member === 'all' ? 'All members' : members.find(m => m.id === member)?.name ?? 'All members';
-
+  const hasFilters  = filters.clientId !== null || filters.billingType !== 'all' || member !== 'all' || !!search;
+  const memberLabel = member === 'all' ? 'All members' : members.find(m => m.id === member)?.name ?? 'All members';
   const singleSelected = selected.size === 1 ? Array.from(selected)[0] : null;
 
   useEffect(() => {
@@ -255,7 +215,10 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
       {/* Toolbar */}
       <div className="ts-toolbar">
         <div className="search-box">
-          <IconSearch size={14} className="ic" />
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="ic">
+            <circle cx="6.5" cy="6.5" r="5" stroke="currentColor" strokeWidth="1.5"/>
+            <line x1="10.5" y1="10.5" x2="14" y2="14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
           <input
             ref={searchInputRef}
             value={search}
@@ -264,40 +227,20 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
           />
         </div>
 
-        <FilterChip label={rangeLabel} icon={<IconCalendar size={12} />}
-          open={openDrop === 'range'} onToggle={() => drop('range')}>
-          <div className="dropdown-section">Range</div>
-          {DATE_RANGES.map(r => (
-            <div key={r.id} className={'dropdown-item' + (range === r.id ? ' selected' : '')}
-              onClick={() => { setRange(r.id); setOpenDrop(null); }}>{r.label}</div>
-          ))}
-        </FilterChip>
+        {/* Shared: date range + client + billing */}
+        <SharedFilterBar clients={clients} ranges={TIMESHEET_RANGES} />
 
-        <FilterChip label={clientLabel} dot={client !== 'all'}
-          open={openDrop === 'client'} onToggle={() => drop('client')}>
-          {[{ id: 'all', label: 'All clients' }, ...clients.map(c => ({ id: c.id, label: c.name }))].map(o => (
-            <div key={o.id} className={'dropdown-item' + (client === o.id ? ' selected' : '')}
-              onClick={() => { setClient(o.id); setOpenDrop(null); }}>{o.label}</div>
-          ))}
-        </FilterChip>
-
-        <FilterChip label={billingLabel} dot={billing !== 'all'}
-          open={openDrop === 'billing'} onToggle={() => drop('billing')}>
-          {([
-            { id: 'all', label: 'All billing' },
-            { id: 'retainer', label: 'Retainership' },
-            { id: 'out', label: 'Out of Retainership' },
-            { id: 'internal', label: 'Internal' },
-          ] as { id: string; label: string }[]).map(o => (
-            <div key={o.id} className={'dropdown-item' + (billing === o.id ? ' selected' : '')}
-              onClick={() => { setBilling(o.id as BillingType | 'all'); setOpenDrop(null); }}>{o.label}</div>
-          ))}
-        </FilterChip>
-
-        <FilterChip label={memberLabel} dot={member !== 'all'}
-          open={openDrop === 'member'} onToggle={() => drop('member')}>
+        {/* Local: member */}
+        <FilterChip
+          label={memberLabel}
+          dot={member !== 'all'}
+          open={openDrop === 'member'}
+          onToggle={() => drop('member')}
+        >
           <div className={'dropdown-item' + (member === 'all' ? ' selected' : '')}
-            onClick={() => { setMember('all'); setOpenDrop(null); }}>All members</div>
+            onClick={() => { setMember('all'); setOpenDrop(null); }}>
+            All members
+          </div>
           <div className="dropdown-section">Team</div>
           {members.map(m => (
             <div key={m.id} className={'dropdown-item' + (member === m.id ? ' selected' : '')}
@@ -321,7 +264,7 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
       {/* Table */}
       <div className="ts-scroll">
         {grouped.length === 0 ? (
-          <EmptyTimesheet hasFilters={hasFilters || range !== 'all'} />
+          <EmptyTimesheet hasFilters={hasFilters || filters.dateRange.preset !== 'all'} />
         ) : (
           <table className={`ts-table${selected.size > 0 ? ' selection-mode' : ''}`}>
             <thead>
@@ -350,13 +293,13 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
             </thead>
             <tbody ref={tbodyRef}>
               {grouped.map(({ date, entries: dayEntries }) => {
-                const d = new Date(date + 'T00:00:00');
+                const d       = new Date(date + 'T00:00:00');
                 const isToday = date === TODAY_STR;
-                const dailyTotal = dayEntries.reduce((s, e) => s + entryHours(e), 0);
+                const dailyTotal  = dayEntries.reduce((s, e) => s + entryHours(e), 0);
                 const memberTotals = Object.fromEntries(
                   members.map(m => [m.id, dayEntries.reduce((s, e) => s + entryMemberHours(e, m.id), 0)])
                 );
-                const allIds = dayEntries.map(e => e.id);
+                const allIds      = dayEntries.map(e => e.id);
                 const allSelected = allIds.length > 0 && allIds.every(id => selected.has(id));
                 const someSelected = allIds.some(id => selected.has(id));
 
@@ -411,13 +354,15 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
                             </td>
                             <td>{proj && <ProjectPill project={proj} clientName={proj.clientId !== proj.clientId.slice(0, -5) ? proj.clientName : undefined} />}</td>
                             <td className="task-cell">
-                              {e.type === 'meeting' && (
-                                <span className="meet">Meeting · {e.meetingPeople}p · {e.meetingDuration}h</span>
-                              )}
-                              {e.task}
+                              {e.type === 'meeting' ? (
+                                <div className="task-cell-meeting">
+                                  <span className="meet">Meeting · {e.meetingPeople}p · {e.meetingDuration}h</span>
+                                  <span>{e.task}</span>
+                                </div>
+                              ) : e.task}
                             </td>
                             {members.map(m => {
-                              const v = entryMemberHours(e, m.id);
+                              const v    = entryMemberHours(e, m.id);
                               const tint = v > 0 ? `color-mix(in oklab, ${m.color} 65%, var(--ink) 35%)` : undefined;
                               return (
                                 <td key={m.id}
@@ -506,7 +451,7 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
                         {dayEntries.length} {dayEntries.length === 1 ? 'entry' : 'entries'}
                       </td>
                       {members.map(m => {
-                        const v = memberTotals[m.id];
+                        const v    = memberTotals[m.id];
                         const tint = v > 0 ? `color-mix(in oklab, ${m.color} 75%, var(--ink) 25%)` : undefined;
                         return (
                           <td key={m.id} className="hrs total member-col"

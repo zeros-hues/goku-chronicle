@@ -9,18 +9,12 @@ interface ProjectPillProps {
 }
 
 export default function ProjectPill({ project, clientName, size = 'md' }: ProjectPillProps) {
-  const color = project.color;
   return (
     <span
-      className="proj-pill"
-      style={{
-        background: `color-mix(in oklab, ${color} 18%, transparent)`,
-        borderColor: `color-mix(in oklab, ${color} 35%, transparent)`,
-        color: `color-mix(in oklab, ${color} 95%, var(--ink) 40%)`,
-        fontSize: size === 'sm' ? '11px' : undefined,
-      }}
+      className={'proj-pill' + (size === 'sm' ? ' proj-pill-sm' : '')}
+      style={{ '--pill-color': project.color } as React.CSSProperties}
     >
-      <span className="swatch" style={{ background: color }} />
+      <span className="swatch" />
       {clientName && <span className="client">{clientName}</span>}
       {project.name}
     </span>
