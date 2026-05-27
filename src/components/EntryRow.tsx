@@ -110,8 +110,12 @@ export default function EntryRow({ entry, members, projectById, selected, onSele
 
         {/* Task */}
         <td className="task-cell">
-          {entry.type === 'meeting' && <span className="meet">Meet</span>}
-          {entry.task}
+          {entry.type === 'meeting' ? (
+            <div className="task-cell-meeting">
+              <span className="meet">MEETING{entry.meetingPeople ? ` · ${entry.meetingPeople}P` : ''}{entry.meetingDuration ? ` · ${entry.meetingDuration}H` : ''}</span>
+              <span>{entry.task}</span>
+            </div>
+          ) : entry.task}
         </td>
 
         {/* Per-member hours */}

@@ -598,6 +598,10 @@ input, textarea, select { font-family: inherit; color: inherit; }
   font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.12em; margin-right: 6px;
   background: var(--paper-deep); color: var(--ink-fade); border: 1px solid var(--paper-edge);
 }
+.ts-table tbody tr.entry .task-cell .task-cell-meeting {
+  display: flex; flex-direction: column; gap: 3px;
+}
+.ts-table tbody tr.entry .task-cell .task-cell-meeting .meet { margin-right: 0; }
 
 .row-checkbox {
   width: 14px; height: 14px; border: 1.5px solid var(--paper-rule); border-radius: 3px;
