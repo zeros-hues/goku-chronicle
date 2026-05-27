@@ -812,7 +812,16 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .status-tag.unmapped { background: var(--accent-soft); color: var(--accent-deep); }
 
 /* ── Login ───────────────────────────────────────────────── */
-.login-shell { min-height: 100vh; display: grid; grid-template-columns: 1.45fr 1fr; background: var(--paper); overflow: hidden; }
+.login-shell { min-height: 100vh; display: grid; grid-template-columns: 3fr 2fr; background: var(--paper); overflow: hidden; }
+
+/* Sea panel — left 60% */
+.sea-panel { position: relative; overflow: hidden; height: 100vh; }
+
+/* Chronicle logo overlay on dark water */
+.sea-logo { position: absolute; top: 48px; left: 52px; z-index: 10; pointer-events: none; }
+.sea-title { font-family: var(--font-serif); font-weight: 400; font-size: 62px; line-height: 0.95; letter-spacing: -0.025em; margin: 0; color: rgba(235, 225, 200, 0.92); text-shadow: 0 2px 24px rgba(0,0,0,0.55), 0 1px 0 rgba(0,0,0,0.3); }
+.sea-title .i { font-style: italic; color: oklch(0.76 0.12 48); }
+.sea-sub { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(190, 210, 220, 0.55); margin-top: 10px; white-space: nowrap; }
 
 .ledger { position: relative; background: var(--paper-deep); border-right: 1px solid var(--paper-edge); overflow: hidden; height: 100vh; }
 .ledger::after { content: ""; position: absolute; top: 0; bottom: 0; right: -1px; width: 8px; background: linear-gradient(to right, transparent 0, oklch(0.30 0.02 50 / 0.06) 60%, oklch(0.30 0.02 50 / 0.10) 100%); z-index: 4; }
