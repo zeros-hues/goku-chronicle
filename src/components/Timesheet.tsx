@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { gsap } from 'gsap';
 import {
   fmtDate, entryHours, entryMemberHours,
-  dowFull, dowShort, monShort, pad,
+  dowFull, monShort,
 } from '@/lib/data';
 import type { Entry, BillingType, Client, Member, Project } from '@/lib/data';
 import ProjectPill from './ProjectPill';
@@ -327,10 +327,7 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
             <thead>
               <tr>
                 <th style={{ width: 34 }} />
-                <th className={'sortable' + (sortBy.key === 'date' ? ' sorted' : '')} style={{ width: 80 }} onClick={() => toggleSort('date')}>
-                  Date <SortMark colKey="date" sortBy={sortBy} />
-                </th>
-                <th style={{ width: 64 }}>Day</th>
+                <th style={{ width: 32, color: 'var(--ink-fade)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>#</th>
                 <th className={'sortable' + (sortBy.key === 'project' ? ' sorted' : '')} style={{ width: 200 }} onClick={() => toggleSort('project')}>
                   Project <SortMark colKey="project" sortBy={sortBy} />
                 </th>
@@ -380,7 +377,7 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
                           }}
                         />
                       </td>
-                      <td colSpan={4 + members.length + 1}>
+                      <td colSpan={4 + members.length}>
                         <div className="date-block">
                           <span className="day">{d.getDate()}</span>
                           <span className="mon">{monShort(d)} {d.getFullYear()}</span>
@@ -390,7 +387,7 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
                       </td>
                     </tr>
 
-                    {dayEntries.map(e => {
+                    {dayEntries.map((e, idx) => {
                       const proj = projectById[e.projectId];
                       const isExp = expanded.has(e.id);
                       const isSel = selected.has(e.id);
@@ -409,11 +406,8 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
                                 onClick={ev => { ev.stopPropagation(); toggleSelect(e.id); }}
                               />
                             </td>
-                            <td className="mono" style={{ color: 'var(--ink-fade)', fontSize: 12 }}>
-                              {pad(d.getDate())}/{pad(d.getMonth() + 1)}
-                            </td>
-                            <td style={{ fontFamily: 'var(--font-serif)', fontStyle: 'italic', color: 'var(--ink-fade)', fontSize: 13 }}>
-                              {dowShort(d)}
+                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-fade)', textAlign: 'center' }}>
+                              {idx + 1}
                             </td>
                             <td>{proj && <ProjectPill project={proj} clientName={proj.clientId !== proj.clientId.slice(0, -5) ? proj.clientName : undefined} />}</td>
                             <td className="task-cell">
@@ -444,7 +438,7 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
 
                           {isExp && (
                             <tr className="expanded-detail">
-                              <td colSpan={5 + members.length + 1}>
+                              <td colSpan={5 + members.length}>
                                 <div className="expanded-detail-content">
                                   <div className="description">{e.task}</div>
                                   <div className="chip-row">
@@ -504,7 +498,7 @@ export default function Timesheet({ entries, clients, members, projectById, onTr
 
                     <tr className="daily-total">
                       <td />
-                      <td colSpan={3} className="daily-total-label">
+                      <td colSpan={2} className="daily-total-label">
                         <span className="hand" style={{ fontSize: 18, marginRight: 8, color: 'var(--accent)' }}>↳</span>
                         Daily total
                       </td>
