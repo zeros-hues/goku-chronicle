@@ -65,8 +65,13 @@ async function processMessage(body: Record<string, unknown>) {
     const type = message.type
     console.log(`[WA] Message received — from: ${from}, type: ${type}`)
 
-    // Resolve team member
-    const member = await prisma.teamMember.findFirst({ where: { whatsappNumber: from } })
+    // Resolve team member — match on last 10 digits to handle +91/91/no-prefix variants
+    const normalise = (n: string) => n.replace(/\D/g, '')
+    const last10 = normalise(from).slice(-10)
+    console.log(`[WA] Normalised number for lookup — last10: ${last10}`)
+    const member = await prisma.teamMember.findFirst({
+      where: { whatsappNumber: { contains: last10 } },
+    })
     console.log(`[WA] Team member lookup for ${from}:`, member ? `found — ${member.name} (id: ${member.id})` : 'NOT FOUND')
 
     if (!member) {
