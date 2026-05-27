@@ -65,14 +65,27 @@ async function processMessage(body: Record<string, unknown>) {
     const type = message.type
     console.log(`[WA] Message received — from: ${from}, type: ${type}`)
 
-    // Resolve team member — match on last 10 digits to handle +91/91/no-prefix variants
-    const normalise = (n: string) => n.replace(/\D/g, '')
-    const last10 = normalise(from).slice(-10)
-    console.log(`[WA] Normalised number for lookup — last10: ${last10}`)
-    const member = await prisma.teamMember.findFirst({
-      where: { whatsappNumber: { contains: last10 } },
-    })
-    console.log(`[WA] Team member lookup for ${from}:`, member ? `found — ${member.name} (id: ${member.id})` : 'NOT FOUND')
+    // Resolve team member — fetch all active members and compare in JS to handle
+    // +91/91/no-prefix variants stored inconsistently in the database
+    const normalise = (n: string) => n.replace(/\D/g, '').slice(-10)
+    const senderLast10 = normalise(from)
+
+    console.log('[WA] Looking for last10:', senderLast10)
+
+    const allMembers = await prisma.teamMember.findMany({ where: { isActive: true } })
+
+    console.log('[WA] All members with numbers:', allMembers.map(m => ({
+      name: m.name,
+      stored: m.whatsappNumber,
+      normalised: m.whatsappNumber ? normalise(m.whatsappNumber) : null,
+    })))
+
+    const member = allMembers.find(m =>
+      m.whatsappNumber !== null &&
+      normalise(m.whatsappNumber) === senderLast10
+    )
+
+    console.log('[WA] Member found:', member?.name ?? 'NOT FOUND')
 
     if (!member) {
       console.log(`[WA] Rejecting unknown number ${from}`)
