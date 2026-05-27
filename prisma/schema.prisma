@@ -88,6 +88,22 @@ enum EntrySource {
   WHATSAPP_BOT
 }
 
+model PendingExtraction {
+  id            String   @id @default(cuid())
+  senderPhone   String   @unique
+  extractedData Json
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  action    String
+  actorName String
+  detail    Json
+  createdAt DateTime @default(now())
+}
+
 model TaskHour {
   id           String     @id @default(cuid())
   taskEntryId  String
