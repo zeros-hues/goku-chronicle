@@ -34,13 +34,17 @@ export async function GET(req: NextRequest) {
 
 /* ── Incoming messages (POST) ───────────────────────────── */
 export async function POST(req: NextRequest) {
-  // Return 200 immediately — Meta requires it
   const body = await req.json()
 
-  // Process asynchronously
-  processMessage(body).catch(e => console.error('WhatsApp processing error:', e))
+  // Process synchronously before responding — Vercel kills async work after the
+  // response is sent, and WhatsApp allows up to 30 s before timing out.
+  try {
+    await processMessage(body)
+  } catch (err) {
+    console.error('[WA] Processing error:', err)
+  }
 
-  return new NextResponse('OK', { status: 200 })
+  return NextResponse.json({ status: 'ok' })
 }
 
 async function processMessage(body: Record<string, unknown>) {
