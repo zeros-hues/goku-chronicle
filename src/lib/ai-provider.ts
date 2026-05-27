@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
+import Groq from 'groq-sdk'
 
 export interface ExtractedEntry {
   rowNumber: number
@@ -127,7 +128,7 @@ async function extractWithOpenAI(base64Image: string, mimeType: string): Promise
         content: [
           {
             type: 'image_url',
-            image_url: { url: `data:${mimeType};base64,${base64Image}` },
+            image_url: { url: `data:${mimeType};base64,${base64Image}`, detail: 'high' },
           },
           { type: 'text', text: EXTRACTION_PROMPT },
         ],
@@ -140,13 +141,44 @@ async function extractWithOpenAI(base64Image: string, mimeType: string): Promise
   return parseJson(text)
 }
 
+async function extractWithGroq(base64Image: string, mimeType: string): Promise<ExtractionResult> {
+  const apiKey = process.env.GROQ_API_KEY
+  if (!apiKey) throw new Error('GROQ_API_KEY is not set')
+
+  const client = new Groq({ apiKey })
+
+  const response = await client.chat.completions.create({
+    model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+    max_tokens: 1024,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: { url: `data:${mimeType};base64,${base64Image}` },
+          },
+          { type: 'text', text: EXTRACTION_PROMPT },
+        ],
+      },
+    ],
+  })
+
+  const text = response.choices[0]?.message?.content ?? ''
+  return parseJson(text)
+}
+
 export async function extractTimesheetFromImage(
   base64Image: string,
   mimeType: string
 ): Promise<ExtractionResult> {
-  const provider = (process.env.AI_PROVIDER ?? 'gemini').toLowerCase()
+  const provider = (process.env.AI_PROVIDER ?? 'groq').toLowerCase()
 
-  if (provider === 'claude') return extractWithClaude(base64Image, mimeType)
-  if (provider === 'openai') return extractWithOpenAI(base64Image, mimeType)
-  return extractWithGemini(base64Image, mimeType)
+  switch (provider) {
+    case 'groq':    return extractWithGroq(base64Image, mimeType)
+    case 'openai':  return extractWithOpenAI(base64Image, mimeType)
+    case 'claude':  return extractWithClaude(base64Image, mimeType)
+    case 'gemini':  return extractWithGemini(base64Image, mimeType)
+    default:        return extractWithGroq(base64Image, mimeType)
+  }
 }
