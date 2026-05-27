@@ -7,6 +7,7 @@ const SHORTCUTS = [
   { key: 'N',   label: 'New entry',                   context: 'Timesheet' },
   { key: 'E',   label: 'Edit selected entry',          context: 'Timesheet' },
   { key: '/',   label: 'Focus search',                 context: 'Timesheet' },
+  { key: '[',   label: 'Toggle sidebar',               context: 'Anywhere'  },
   { key: '?',   label: 'Show this dialog',             context: 'Anywhere'  },
   { key: 'Esc', label: 'Close drawer / dialog',        context: 'Anywhere'  },
 ];

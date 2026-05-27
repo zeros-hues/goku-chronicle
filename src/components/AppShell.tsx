@@ -90,6 +90,13 @@ export default function AppShell() {
     }
     return 'light';
   });
+  const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('chronicle-sidebar-collapsed');
+      return saved ? JSON.parse(saved) : false;
+    }
+    return false;
+  });
 
   const [entries, setEntries]    = useState<Entry[]>([]);
   const [clients, setClients]    = useState<Client[]>([]);
@@ -167,6 +174,15 @@ export default function AppShell() {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('chronicle-theme', theme);
   }, [theme]);
+
+  /* ── Sidebar collapse persistence ──────────────────────── */
+  function toggleSidebar() {
+    setIsCollapsed(prev => {
+      const next = !prev;
+      localStorage.setItem('chronicle-sidebar-collapsed', JSON.stringify(next));
+      return next;
+    });
+  }
 
   /* ── Toast + activity system ───────────────────────────── */
   const showToast = useCallback((
@@ -302,6 +318,12 @@ export default function AppShell() {
 
       if (inInput) return;
 
+      if (e.key === '[') {
+        e.preventDefault();
+        toggleSidebar();
+        return;
+      }
+
       if (e.key === '?') {
         e.preventDefault();
         setShowShortcuts(v => !v);
@@ -395,6 +417,8 @@ export default function AppShell() {
         onSignOut={() => signOut({ callbackUrl: '/login' })}
         activityCount={activityCount}
         onActivityClick={openActivity}
+        isCollapsed={isCollapsed}
+        onToggle={toggleSidebar}
       />
       <div className="main-area">
         <TopBar title={title} sub={sub} actions={topBarActions} />

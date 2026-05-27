@@ -137,14 +137,14 @@ input, textarea, select { font-family: inherit; color: inherit; }
 
 /* ── App shell ───────────────────────────────────────────── */
 .app {
-  display: grid;
-  grid-template-columns: 248px 1fr;
+  display: flex;
   height: 100vh;
   background: var(--paper);
   overflow: hidden;
 }
 
 .main-area {
+  flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -252,6 +252,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
 
 /* ── Sidebar ─────────────────────────────────────────────── */
 .sidebar {
+  flex-shrink: 0;
+  width: 224px;  /* initial; GSAP overrides during animation */
   background: var(--paper-deep);
   border-right: 1px solid var(--paper-edge);
   display: flex;
@@ -260,7 +262,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
   gap: 4px;
   position: relative;
   height: 100vh;
-  overflow-y: auto;
+  overflow: visible;
+  z-index: 10;
 }
 .sidebar::before {
   content: "";
@@ -355,31 +358,22 @@ input, textarea, select { font-family: inherit; color: inherit; }
   gap: 2px;
 }
 
-.theme-toggle {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--paper);
-  border: 1px solid var(--paper-edge);
-  font-size: 12px;
-  color: var(--ink-soft);
-  cursor: pointer;
-}
-.theme-toggle .track {
+.toggle-track {
   margin-left: auto;
   width: 28px; height: 16px; border-radius: 8px;
   background: var(--paper-edge);
   position: relative;
   transition: background 0.2s ease;
+  flex-shrink: 0;
 }
-.theme-toggle .knob {
+.toggle-track.on { background: var(--accent-soft); }
+.toggle-knob {
   position: absolute; top: 2px; left: 2px;
   width: 12px; height: 12px; border-radius: 6px;
   background: var(--ink);
   transition: transform 0.2s ease, background 0.2s ease;
 }
-[data-theme="dark"] .theme-toggle .track { background: var(--accent-soft); }
-[data-theme="dark"] .theme-toggle .knob { transform: translateX(12px); background: var(--accent); }
+.toggle-track.on .toggle-knob { transform: translateX(12px); background: var(--accent); }
 
 .user-chip { display: flex; align-items: center; gap: 10px; padding: 10px 8px; margin-bottom: 4px; }
 .user-chip .avatar {
@@ -390,6 +384,117 @@ input, textarea, select { font-family: inherit; color: inherit; }
 }
 .user-chip .name { font-weight: 600; font-size: 13px; line-height: 1.1; }
 .user-chip .role { font-size: 11px; color: var(--ink-fade); font-family: var(--font-mono); }
+
+/* ── Sidebar collapse ────────────────────────────────────── */
+
+/* Toggle button — sits on right edge of sidebar */
+.sidebar-toggle-btn {
+  position: absolute;
+  right: -12px;
+  top: 22px;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: var(--paper-deep);
+  border: 1px solid var(--paper-edge);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  color: var(--ink-fade);
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.12s ease, opacity 0.12s ease, color 0.12s ease;
+  opacity: 0.5;
+  z-index: 20;
+  padding: 0;
+}
+.sidebar-toggle-btn:hover { opacity: 1; color: var(--ink); transform: scale(1.1); }
+
+/* Icon pill — wraps every icon */
+.nav-icon-pill {
+  width: 24px; height: 24px;
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  position: relative;
+  transition: background 0.12s ease;
+}
+
+/* Badge on icon (collapsed activity count) */
+.nav-icon-badge {
+  position: absolute;
+  top: -4px; right: -4px;
+  min-width: 14px; height: 14px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--paper);
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 3px;
+}
+
+/* Tooltip — shows on hover in collapsed state */
+.sidebar-tooltip {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 100ms ease;
+  z-index: 100;
+  box-shadow: var(--shadow);
+}
+.nav-item:hover .sidebar-tooltip { opacity: 1; }
+
+/* Collapsed state overrides */
+.sidebar.collapsed {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: 6px 0;
+}
+
+.sidebar.collapsed .nav-item.active::before {
+  display: none;
+}
+
+.sidebar.collapsed .nav-item.active .nav-icon-pill {
+  background: var(--paper);
+  box-shadow: var(--shadow-sm);
+}
+
+.sidebar.collapsed .sidebar-brand {
+  align-items: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sidebar.collapsed .sidebar-footer {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* Labels hidden in collapsed state (GSAP handles animated fade during transition) */
+.sidebar.collapsed .sidebar-label {
+  display: none;
+}
+
+/* Reduced-motion: skip GSAP, use instant CSS transition */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar { transition: width 0ms !important; }
+  .sidebar-label { transition: opacity 0ms !important; }
+  .sidebar-toggle-btn { transition: none !important; }
+}
 
 /* ── Timesheet ───────────────────────────────────────────── */
 .ts-toolbar {
