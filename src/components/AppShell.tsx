@@ -21,6 +21,8 @@ import type { View, Theme, Entry, Client, Member, ActivityEvent } from '@/lib/da
 import * as api from '@/lib/api';
 import { IconPlus, IconImport, IconTimesheet, IconDashboard, IconCheck } from '@/components/Icons';
 import { FilterProvider } from '@/context/FilterContext';
+import CommandPalette from '@/components/CommandPalette';
+import { useCommandPalette } from '@/hooks/useCommandPalette';
 
 /* ── Toast types ─────────────────────────────────────────── */
 interface ToastItem {
@@ -111,6 +113,7 @@ export default function AppShell() {
   const [editEntry, setEditEntry]   = useState<Entry | undefined>(undefined);
   const [showImport, setShowImport] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const { open: paletteOpen, openPalette, close: closePalette } = useCommandPalette();
   const [newEntryId, setNewEntryId] = useState<number | null>(null);
   const [toasts, setToasts]         = useState<ToastItem[]>([]);
   const toastTimers                 = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
@@ -383,6 +386,18 @@ export default function AppShell() {
 
   const topBarActions = (
     <>
+      <button
+        className="btn btn-ghost cp-trigger-btn"
+        onClick={openPalette}
+        title="Command palette"
+        aria-label="Open command palette"
+      >
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ opacity: 0.55 }}>
+          <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5"/>
+          <path d="M11 11L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
+        <span className="cp-trigger-hint">⌘K</span>
+      </button>
       {isTimesheetOrDash && (
         <div className="view-segments">
           <button className={view === 'timesheet' ? 'active' : ''} onClick={() => navigate('timesheet')}>
@@ -520,6 +535,20 @@ export default function AppShell() {
       {showShortcuts && (
         <ShortcutsDialog onClose={() => setShowShortcuts(false)} />
       )}
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={closePalette}
+        view={view}
+        navigate={navigate}
+        onNewEntry={() => { setEditEntry(undefined); setShowDrawer(true); }}
+        onImport={() => setShowImport(true)}
+        onToggleSidebar={toggleSidebar}
+        theme={theme}
+        onSetTheme={setTheme}
+        onShowShortcuts={() => setShowShortcuts(true)}
+        onOpenActivity={openActivity}
+      />
 
       {showActivity && (
         <ActivityPanel

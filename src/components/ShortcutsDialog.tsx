@@ -4,7 +4,8 @@ import { useEffect } from 'react';
 import { IconX } from './Icons';
 
 const SHORTCUTS = [
-  { key: 'N',   label: 'New entry',                   context: 'Timesheet' },
+  { key: '⌘K',  label: 'Command palette',              context: 'Anywhere'  },
+  { key: 'N',   label: 'New entry',                    context: 'Timesheet' },
   { key: 'E',   label: 'Edit selected entry',          context: 'Timesheet' },
   { key: '/',   label: 'Focus search',                 context: 'Timesheet' },
   { key: '[',   label: 'Toggle sidebar',               context: 'Anywhere'  },
