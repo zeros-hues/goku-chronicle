@@ -540,8 +540,6 @@ export default function AppShell() {
         open={paletteOpen}
         onClose={closePalette}
         view={view}
-        clients={clients}
-        members={activeMembers}
         navigate={navigate}
         onNewEntry={() => { setEditEntry(undefined); setShowDrawer(true); }}
         onImport={() => setShowImport(true)}
@@ -549,6 +547,7 @@ export default function AppShell() {
         theme={theme}
         onSetTheme={setTheme}
         onShowShortcuts={() => setShowShortcuts(true)}
+        onOpenActivity={openActivity}
       />
 
       {showActivity && (
